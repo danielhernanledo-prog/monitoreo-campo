@@ -1,0 +1,816 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full bg-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Monitoreo Agrícola - Reportes de Campo</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- FontAwesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+  <!-- html2pdf.js para conversión directa HTML a PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+              800: '#166534',
+              900: '#14532d',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    input, textarea, select {
+      user-select: text;
+    }
+
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #printable-area, #printable-area * {
+        visibility: visible;
+      }
+      #printable-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        margin: 0;
+        padding: 20px;
+        background: white !important;
+        color: black !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans text-slate-800 antialiased selection:bg-brand-500 selection:text-white">
+
+  <!-- TOP HEADER -->
+  <header class="bg-brand-800 text-white sticky top-0 z-40 shadow-md no-print">
+    <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
+      <div class="flex items-center space-x-3">
+        <div class="bg-brand-600 p-2 rounded-lg text-white">
+          <i class="fa-solid font-bold fa-wheat-awn text-xl"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight">Monitoreo Campo</h1>
+          <div class="flex items-center space-x-2 text-xs text-brand-100">
+            <span id="connection-status-dot" class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span id="connection-status-text" class="font-semibold">Online</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-2">
+        <button id="btn-sync-header" onclick="syncWithGist()" title="Sincronizar ahora"
+          class="relative bg-brand-700 hover:bg-brand-600 active:scale-95 text-white p-2.5 rounded-xl border border-brand-600 flex items-center justify-center transition">
+          <i id="sync-icon" class="fa-solid fa-rotate text-lg"></i>
+          <span id="badge-pending-count" class="hidden absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full border-2 border-brand-800">0</span>
+        </button>
+
+        <button onclick="toggleConfigModal(true)" title="Configuración de Sync"
+          class="bg-brand-700 hover:bg-brand-600 active:scale-95 text-white p-2.5 rounded-xl border border-brand-600 flex items-center justify-center transition">
+          <i class="fa-solid fa-gear text-lg"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTENIDO PRINCIPAL -->
+  <main class="flex-1 max-w-md w-full mx-auto p-4 space-y-6 pb-24 overflow-y-auto">
+
+    <!-- ALERTA MENSAJE DE SISTEMA -->
+    <div id="toast-message" class="hidden transition-all duration-300 p-4 rounded-xl text-sm font-semibold shadow-md flex items-center justify-between no-print">
+      <div class="flex items-center space-x-2">
+        <i id="toast-icon" class="fa-solid"></i>
+        <span id="toast-text"></span>
+      </div>
+      <button onclick="hideToast()" class="opacity-70 hover:opacity-100"><i class="fa-solid fa-xmark"></i></button>
+    </div>
+
+    <!-- PESTAÑAS NAVEGACIÓN VISTAS -->
+    <div class="grid grid-cols-2 bg-slate-200 p-1 rounded-xl gap-1 text-sm font-semibold no-print">
+      <button id="tab-btn-form" onclick="switchTab('form')" class="py-2.5 rounded-lg bg-white shadow-sm text-brand-800 flex items-center justify-center space-x-2 transition">
+        <i class="fa-solid fa-pen-to-square"></i>
+        <span>Nuevo Reporte</span>
+      </button>
+      <button id="tab-btn-history" onclick="switchTab('history')" class="py-2.5 rounded-lg text-slate-600 flex items-center justify-center space-x-2 transition">
+        <i class="fa-solid fa-list-check"></i>
+        <span>Historial</span>
+        <span id="badge-total-count" class="bg-slate-300 text-slate-700 text-xs px-2 py-0.5 rounded-full">0</span>
+      </button>
+    </div>
+
+    <!-- FORMULARIO DE REPORTE -->
+    <section id="section-form" class="bg-white rounded-2xl shadow-sm border border-slate-200 p-5 space-y-4 no-print">
+      <div class="border-b border-slate-100 pb-3 flex justify-between items-center">
+        <h2 class="font-bold text-slate-800 text-lg flex items-center space-x-2">
+          <i class="fa-solid fa-clipboard-list text-brand-600"></i>
+          <span>Datos de la Recorrida</span>
+        </h2>
+        <span class="text-xs text-slate-400">* Requeridos</span>
+      </div>
+
+      <form id="report-form" onsubmit="handleFormSubmit(event)" class="space-y-4">
+        
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Fecha *</label>
+            <input type="date" id="field-fecha" required
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 font-medium outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Campo *</label>
+            <input type="text" id="field-campo" placeholder="Ej: Chacra Quico" required
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 focus:border-brand-500 font-medium outline-none">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-3">
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Lote *</label>
+            <input type="text" id="field-lote" placeholder="Ej: 1" required
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Sup. (ha)</label>
+            <input type="number" step="0.1" id="field-sup" placeholder="40"
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Cultivo *</label>
+            <input type="text" id="field-cultivo" list="cultivos-list" placeholder="Maíz Tardío" required
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+            <datalist id="cultivos-list">
+              <option value="Maíz Tardío"></option>
+              <option value="Maíz Temprano"></option>
+              <option value="Soja 1ra"></option>
+              <option value="Soja 2da"></option>
+              <option value="Trigo"></option>
+              <option value="Girasol"></option>
+              <option value="Barbecho"></option>
+              <option value="Verdeo"></option>
+            </datalist>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Estado del Lote</label>
+          <input type="text" id="field-estado" placeholder="Ej: Quemado verdeo, Emergencia..."
+            class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Plagas</label>
+            <input type="text" id="field-plagas" placeholder="Ej: Cogollero bajo..."
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Malezas</label>
+            <input type="text" id="field-malezas" placeholder="Ej: Rama Negra, Rama Amarilla..."
+              class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-200 rounded-xl">
+          <div class="flex flex-col">
+            <span class="font-bold text-slate-800 text-sm">¿Requiere Aplicación?</span>
+            <span class="text-xs text-slate-500">Marque si se recomienda pulverizar</span>
+          </div>
+          <label for="field-aplicar" class="inline-flex items-center cursor-pointer">
+            <input type="checkbox" id="field-aplicar" class="sr-only peer">
+            <div class="w-14 h-8 bg-slate-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[4px] after:left-[4px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-brand-600 relative"></div>
+          </label>
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Observaciones</label>
+          <textarea id="field-observaciones" rows="3" placeholder="Ej: Todavía no se ve efecto del glifo. Muy pocos días de aplicado..."
+            class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:bg-white focus:ring-2 focus:ring-brand-500 outline-none resize-none"></textarea>
+        </div>
+
+        <button type="submit"
+          class="w-full bg-brand-600 hover:bg-brand-700 active:scale-[0.99] text-white font-bold py-4 rounded-xl shadow-lg shadow-brand-600/30 flex items-center justify-center space-x-2 text-base transition">
+          <i class="fa-solid fa-floppy-disk text-lg"></i>
+          <span>GUARDAR REPORTE LOCAL</span>
+        </button>
+      </form>
+    </section>
+
+    <!-- HISTORIAL DE REPORTES -->
+    <section id="section-history" class="hidden space-y-3 no-print">
+      
+      <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center text-xs">
+        <span class="font-bold text-slate-600">Exportar Todo:</span>
+        <div class="flex space-x-2">
+          <button onclick="exportToCSV()" class="bg-emerald-100 text-emerald-800 font-bold px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-200 flex items-center space-x-1">
+            <i class="fa-solid fa-file-csv"></i>
+            <span>CSV</span>
+          </button>
+          <button onclick="exportToJSON()" class="bg-blue-100 text-blue-800 font-bold px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-200 flex items-center space-x-1">
+            <i class="fa-solid fa-file-code"></i>
+            <span>JSON</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="reports-container" class="space-y-3">
+        <!-- Renderizado vía JS -->
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL DE VISTA PREVIA IMPRESIÓN / DESCARGA PDF -->
+  <div id="modal-print-preview" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 hidden flex flex-col items-center justify-center p-3">
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+      
+      <div class="bg-slate-800 text-white p-4 flex justify-between items-center no-print">
+        <h3 class="font-bold text-base flex items-center space-x-2">
+          <i class="fa-solid fa-file-pdf text-red-400"></i>
+          <span>Reporte PDF de Campo</span>
+        </h3>
+        <button onclick="togglePrintModal(false)" class="text-slate-400 hover:text-white">
+          <i class="fa-solid fa-xmark text-xl"></i>
+        </button>
+      </div>
+
+      <!-- ÁREA QUE SE CONVIERTE EN PDF -->
+      <div class="p-6 overflow-y-auto flex-1 bg-white" id="printable-area">
+        <!-- Contenido dinámico del reporte -->
+      </div>
+
+      <!-- BOTONES DE ACCIÓN PARA PDF Y PRINT -->
+      <div class="p-4 bg-slate-100 border-t border-slate-200 flex flex-wrap justify-end gap-2 no-print">
+        <button onclick="togglePrintModal(false)" class="px-3.5 py-2 rounded-xl border border-slate-300 font-bold text-slate-600 hover:bg-slate-200 text-xs">
+          Cancelar
+        </button>
+        <button onclick="downloadPdfDirect()" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
+          <i class="fa-solid fa-file-arrow-down"></i>
+          <span>Descargar PDF Directo</span>
+        </button>
+        <button onclick="window.print()" class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-800 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
+          <i class="fa-solid fa-print"></i>
+          <span>Imprimir / Enviar</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE CONFIGURACIÓN DE GITHUB GIST -->
+  <div id="modal-config" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 no-print">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden">
+      <div class="bg-brand-800 text-white p-4 flex justify-between items-center">
+        <h3 class="font-bold text-lg flex items-center space-x-2">
+          <i class="fa-solid fa-cloud-arrow-up"></i>
+          <span>Sincronización (GitHub Gist)</span>
+        </h3>
+        <button onclick="toggleConfigModal(false)" class="text-brand-200 hover:text-white">
+          <i class="fa-solid fa-xmark text-xl"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4 text-slate-700 text-sm">
+        <p class="text-xs text-slate-500">
+          Configurá tus credenciales de GitHub para respaldar tus reportes en la nube automáticamente o cuando tengas conexión.
+        </p>
+
+        <div>
+          <label class="block text-xs font-bold uppercase text-slate-600 mb-1">GitHub Personal Access Token (PAT)</label>
+          <input type="password" id="config-token" placeholder="ghp_xxxxxxxxxxxx"
+            class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-bold uppercase text-slate-600 mb-1">Gist ID</label>
+          <input type="text" id="config-gist-id" placeholder="ej: 8f4a10c2b..."
+            class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3 text-slate-800 focus:ring-2 focus:ring-brand-500 outline-none">
+        </div>
+
+        <div class="pt-2 flex justify-end space-x-3">
+          <button onclick="toggleConfigModal(false)" class="px-4 py-2.5 rounded-xl border border-slate-300 font-bold text-slate-600 hover:bg-slate-50">
+            Cancelar
+          </button>
+          <button onclick="saveConfig()" class="px-5 py-2.5 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold shadow-md">
+            Guardar Cambios
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const STORAGE_KEY = 'agri_reports_data';
+    const CONFIG_KEY = 'agri_gist_config';
+
+    let reports = [];
+    let config = { token: '', gistId: '' };
+    let currentReportForPdf = null;
+
+    window.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
+      loadLocalReports();
+      loadConfig();
+      updateOnlineStatus();
+
+      window.addEventListener('online', updateOnlineStatus);
+      window.addEventListener('offline', updateOnlineStatus);
+    });
+
+    function loadLocalReports() {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        try {
+          reports = JSON.parse(stored);
+        } catch (e) {
+          reports = [];
+        }
+      } else {
+        reports = [{
+          id: 'demo-1',
+          fecha: '2026-10-08',
+          campo: 'Chacra Quico',
+          lote: '1',
+          sup: '40',
+          cultivo: 'Maíz Tardío',
+          estado: 'Quemado verdeo',
+          plagas: '',
+          malezas: '',
+          aplicar: false,
+          observaciones: 'Todavía no se ve efecto del glifo. Muy pocos días de aplicado',
+          pendingSync: true,
+          createdAt: new Date('2026-10-08T10:00:00').toISOString()
+        }];
+        saveLocalReports();
+      }
+      renderReportsList();
+      updateBadges();
+    }
+
+    function saveLocalReports() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
+      updateBadges();
+    }
+
+    function loadConfig() {
+      const stored = localStorage.getItem(CONFIG_KEY);
+      if (stored) {
+        config = JSON.parse(stored);
+        document.getElementById('config-token').value = config.token || '';
+        document.getElementById('config-gist-id').value = config.gistId || '';
+      }
+    }
+
+    function saveConfig() {
+      config.token = document.getElementById('config-token').value.trim();
+      config.gistId = document.getElementById('config-gist-id').value.trim();
+      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      toggleConfigModal(false);
+      showToast("Configuración guardada", "success");
+    }
+
+    function updateOnlineStatus() {
+      const isOnline = navigator.onLine;
+      const dot = document.getElementById('connection-status-dot');
+      const text = document.getElementById('connection-status-text');
+
+      if (isOnline) {
+        dot.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
+        text.innerText = "Online";
+      } else {
+        dot.className = "w-2.5 h-2.5 rounded-full bg-amber-400";
+        text.innerText = "Sin señal (Offline)";
+      }
+    }
+
+    function handleFormSubmit(event) {
+      event.preventDefault();
+
+      const newReport = {
+        id: 'rep_' + Date.now(),
+        fecha: document.getElementById('field-fecha').value,
+        campo: document.getElementById('field-campo').value.trim(),
+        lote: document.getElementById('field-lote').value.trim(),
+        sup: document.getElementById('field-sup').value.trim(),
+        cultivo: document.getElementById('field-cultivo').value.trim(),
+        estado: document.getElementById('field-estado').value.trim(),
+        plagas: document.getElementById('field-plagas').value.trim(),
+        malezas: document.getElementById('field-malezas').value.trim(),
+        aplicar: document.getElementById('field-aplicar').checked,
+        observaciones: document.getElementById('field-observaciones').value.trim(),
+        pendingSync: true,
+        createdAt: new Date().toISOString()
+      };
+
+      reports.unshift(newReport);
+      saveLocalReports();
+      renderReportsList();
+
+      document.getElementById('report-form').reset();
+      document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
+
+      showToast("Reporte guardado", "success");
+      switchTab('history');
+    }
+
+    function renderReportsList() {
+      const container = document.getElementById('reports-container');
+      
+      if (reports.length === 0) {
+        container.innerHTML = `
+          <div class="bg-white rounded-2xl p-8 text-center text-slate-400 border border-slate-200">
+            <i class="fa-solid fa-clipboard text-4xl mb-2 text-slate-300"></i>
+            <p class="font-medium">No hay reportes cargados.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = reports.map(r => `
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3 relative overflow-hidden">
+          
+          <div class="absolute top-0 left-0 bottom-0 w-1.5 ${r.pendingSync ? 'bg-amber-500' : 'bg-emerald-500'}"></div>
+
+          <div class="flex justify-between items-start pl-2">
+            <div>
+              <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">${formatDate(r.fecha)}</span>
+              <h3 class="font-bold text-slate-800 text-lg leading-tight">${escapeHtml(r.campo)} - Lote ${escapeHtml(r.lote)}</h3>
+            </div>
+            <div class="flex items-center space-x-1">
+              <button onclick="printSingleReport('${r.id}')" title="Generar / Descargar PDF" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
+                <i class="fa-solid fa-file-pdf text-sm"></i>
+                <span>PDF</span>
+              </button>
+              <button onclick="deleteReport('${r.id}')" title="Eliminar" class="text-slate-300 hover:text-red-500 p-2">
+                <i class="fa-solid fa-trash-can"></i>
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2 text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100 pl-3">
+            <div><span class="text-slate-400">Cultivo:</span> <strong class="text-slate-700">${escapeHtml(r.cultivo)}</strong></div>
+            <div><span class="text-slate-400">Superficie:</span> <strong class="text-slate-700">${r.sup ? r.sup + ' ha' : '-'}</strong></div>
+            <div class="col-span-2"><span class="text-slate-400">Estado:</span> <strong class="text-slate-700">${escapeHtml(r.estado || '-')}</strong></div>
+          </div>
+
+          <div class="space-y-1 text-xs pl-2">
+            ${r.plagas ? `<div><span class="font-bold text-slate-500">Plagas:</span> <span class="text-slate-700">${escapeHtml(r.plagas)}</span></div>` : ''}
+            ${r.malezas ? `<div><span class="font-bold text-slate-500">Malezas:</span> <span class="text-slate-700">${escapeHtml(r.malezas)}</span></div>` : ''}
+            <div>
+              <span class="font-bold text-slate-500">¿Aplicar?:</span> 
+              <span class="${r.aplicar ? 'text-red-600 font-bold' : 'text-slate-700'}">${r.aplicar ? 'SÍ (Requerido)' : 'No'}</span>
+            </div>
+          </div>
+
+          ${r.observaciones ? `
+            <div class="text-xs bg-amber-50/50 border border-amber-100 p-2.5 rounded-xl text-slate-700 italic pl-3">
+              "${escapeHtml(r.observaciones)}"
+            </div>
+          ` : ''}
+
+        </div>
+      `).join('');
+    }
+
+    function printSingleReport(id) {
+      const r = reports.find(item => item.id === id);
+      if (!r) return;
+
+      currentReportForPdf = r;
+      const area = document.getElementById('printable-area');
+      area.innerHTML = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
+          <div style="border-bottom: 3px solid #166534; padding-bottom: 12px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h1 style="margin: 0; color: #166534; font-size: 20px; font-weight: bold;">REPORTE DE MONITOREO AGRÍCOLA</h1>
+              <p style="margin: 4px 0 0 0; color: #64748b; font-size: 12px;">Planilla de Campo de Control Técnico</p>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size: 13px; font-weight: bold; color: #334155;">FECHA: ${formatDate(r.fecha)}</span>
+            </div>
+          </div>
+
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 13px;">
+            <tr>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold; width: 25%;">Campo:</td>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold; width: 25%;">${escapeHtml(r.campo)}</td>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold; width: 25%;">Lote:</td>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold; width: 25%;">${escapeHtml(r.lote)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold;">Superficie:</td>
+              <td style="padding: 8px; border: 1px solid #cbd5e1;">${r.sup ? r.sup + ' ha' : '-'}</td>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold;">Cultivo:</td>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold;">${escapeHtml(r.cultivo)}</td>
+            </tr>
+            <tr>
+              <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold;">Estado Lote:</td>
+              <td colspan="3" style="padding: 8px; border: 1px solid #cbd5e1;">${escapeHtml(r.estado || '-')}</td>
+            </tr>
+          </table>
+
+          <div style="margin-bottom: 18px;">
+            <h3 style="font-size: 13px; font-weight: bold; color: #1e293b; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-bottom: 8px;">
+              DETALLES SANITARIOS
+            </h3>
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+              <tr>
+                <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold; width: 35%;">Plagas Registradas:</td>
+                <td style="padding: 8px; border: 1px solid #cbd5e1;">${escapeHtml(r.plagas || 'Ninguna observada')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold;">Malezas Detectadas:</td>
+                <td style="padding: 8px; border: 1px solid #cbd5e1;">${escapeHtml(r.malezas || 'Sin presiones relevantes')}</td>
+              </tr>
+              <tr>
+                <td style="padding: 8px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: bold;">¿Requiere Aplicación?:</td>
+                <td style="padding: 8px; border: 1px solid #cbd5e1; font-weight: bold; color: ${r.aplicar ? '#dc2626' : '#166534'};">
+                  ${r.aplicar ? 'SÍ (SE RECOMIENDA TRATAMIENTO)' : 'NO REQUIERE APLICACIÓN'}
+                </td>
+              </tr>
+            </table>
+          </div>
+
+          <div style="margin-bottom: 25px;">
+            <h3 style="font-size: 13px; font-weight: bold; color: #1e293b; border-bottom: 1px solid #e2e8f0; padding-bottom: 4px; margin-bottom: 6px;">
+              OBSERVACIONES TÉCNICAS
+            </h3>
+            <div style="padding: 10px; border: 1px solid #cbd5e1; background: #fffbebf5; font-size: 12px; line-height: 1.4; font-style: italic;">
+              ${escapeHtml(r.observaciones || 'Sin observaciones adicionales.')}
+            </div>
+          </div>
+
+          <div style="margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px; display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8;">
+            <span>Reporte de Monitoreo Agrícola</span>
+            <span>Generado: ${new Date().toLocaleDateString('es-AR')}</span>
+          </div>
+        </div>
+      `;
+
+      togglePrintModal(true);
+    }
+
+    function downloadPdfDirect() {
+      if (!currentReportForPdf) return;
+      const element = document.getElementById('printable-area');
+      const filename = `Reporte_${currentReportForPdf.campo.replace(/\s+/g, '_')}_Lote${currentReportForPdf.lote}_${currentReportForPdf.fecha}.pdf`;
+      
+      const opt = {
+        margin:       10,
+        filename:     filename,
+        image:        { type: 'jpeg', quality: 0.98 },
+        html2canvas:  { scale: 2 },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      html2pdf().set(opt).from(element).save();
+      showToast("Descargando PDF...", "success");
+    }
+
+    function togglePrintModal(show) {
+      const modal = document.getElementById('modal-print-preview');
+      if (show) modal.classList.remove('hidden');
+      else modal.classList.add('hidden');
+    }
+
+    function deleteReport(id) {
+      if (confirm("¿Estás seguro de eliminar este reporte local?")) {
+        reports = reports.filter(r => r.id !== id);
+        saveLocalReports();
+        renderReportsList();
+        showToast("Reporte eliminado", "info");
+      }
+    }
+
+    async function syncWithGist() {
+      if (!navigator.onLine) {
+        showToast("Sin señal de internet.", "warning");
+        return;
+      }
+
+      if (!config.token) {
+        showToast("Configurá tu Token de GitHub primero.", "warning");
+        toggleConfigModal(true);
+        return;
+      }
+
+      const syncIcon = document.getElementById('sync-icon');
+      syncIcon.classList.add('fa-spin');
+
+      try {
+        const payloadFiles = {
+          "reportes_campo.json": {
+            content: JSON.stringify(reports, null, 2)
+          }
+        };
+
+        let response;
+        if (config.gistId) {
+          response = await fetch(`https://api.github.com/gists/${config.gistId}`, {
+            method: 'PATCH',
+            headers: {
+              'Authorization': `Bearer ${config.token}`,
+              'Accept': 'application/vnd.github+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              description: "Reportes de Monitoreo Agrícola",
+              files: payloadFiles
+            })
+          });
+        } else {
+          response = await fetch(`https://api.github.com/gists`, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${config.token}`,
+              'Accept': 'application/vnd.github+json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              description: "Reportes de Monitoreo Agrícola",
+              public: false,
+              files: payloadFiles
+            })
+          });
+        }
+
+        if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+
+        const data = await response.json();
+        
+        if (!config.gistId && data.id) {
+          config.gistId = data.id;
+          localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+          document.getElementById('config-gist-id').value = data.id;
+        }
+
+        reports = reports.map(r => ({ ...r, pendingSync: false }));
+        saveLocalReports();
+        renderReportsList();
+
+        showToast("Sincronizado con GitHub Gist", "success");
+      } catch (err) {
+        showToast("Error en sincronización: " + err.message, "error");
+      } finally {
+        syncIcon.classList.remove('fa-spin');
+      }
+    }
+
+    function exportToCSV() {
+      if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
+
+      const headers = ["Fecha", "Campo", "Lote", "Superficie", "Cultivo", "Estado", "Plagas", "Malezas", "Aplicar", "Observaciones", "Sincronizado"];
+      const rows = reports.map(r => [
+        r.fecha,
+        `"${(r.campo || '').replace(/"/g, '""')}"`,
+        `"${(r.lote || '').replace(/"/g, '""')}"`,
+        r.sup || '',
+        `"${(r.cultivo || '').replace(/"/g, '""')}"`,
+        `"${(r.estado || '').replace(/"/g, '""')}"`,
+        `"${(r.plagas || '').replace(/"/g, '""')}"`,
+        `"${(r.malezas || '').replace(/"/g, '""')}"`,
+        r.aplicar ? 'SI' : 'NO',
+        `"${(r.observaciones || '').replace(/"/g, '""')}"`,
+        r.pendingSync ? 'NO' : 'SI'
+      ]);
+
+      const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+      downloadFile(csvContent, `Reportes_Campo_${new Date().toISOString().split('T')[0]}.csv`, 'text/csv;charset=utf-8;');
+    }
+
+    function exportToJSON() {
+      if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
+      const jsonStr = JSON.stringify(reports, null, 2);
+      downloadFile(jsonStr, `Reportes_Campo_${new Date().toISOString().split('T')[0]}.json`, 'application/json');
+    }
+
+    function downloadFile(content, fileName, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function switchTab(tab) {
+      const formSection = document.getElementById('section-form');
+      const historySection = document.getElementById('section-history');
+      const btnForm = document.getElementById('tab-btn-form');
+      const btnHistory = document.getElementById('tab-btn-history');
+
+      if (tab === 'form') {
+        formSection.classList.remove('hidden');
+        historySection.classList.add('hidden');
+        btnForm.className = "py-2.5 rounded-lg bg-white shadow-sm text-brand-800 flex items-center justify-center space-x-2 transition";
+        btnHistory.className = "py-2.5 rounded-lg text-slate-600 flex items-center justify-center space-x-2 transition";
+      } else {
+        formSection.classList.add('hidden');
+        historySection.classList.remove('hidden');
+        btnHistory.className = "py-2.5 rounded-lg bg-white shadow-sm text-brand-800 flex items-center justify-center space-x-2 transition";
+        btnForm.className = "py-2.5 rounded-lg text-slate-600 flex items-center justify-center space-x-2 transition";
+      }
+    }
+
+    function updateBadges() {
+      const pendingCount = reports.filter(r => r.pendingSync).length;
+      const pendingBadge = document.getElementById('badge-pending-count');
+      const totalBadge = document.getElementById('badge-total-count');
+
+      totalBadge.innerText = reports.length;
+
+      if (pendingCount > 0) {
+        pendingBadge.innerText = pendingCount;
+        pendingBadge.classList.remove('hidden');
+      } else {
+        pendingBadge.classList.add('hidden');
+      }
+    }
+
+    function toggleConfigModal(show) {
+      const modal = document.getElementById('modal-config');
+      if (show) modal.classList.remove('hidden');
+      else modal.classList.add('hidden');
+    }
+
+    function showToast(msg, type = "info") {
+      const toast = document.getElementById('toast-message');
+      const icon = document.getElementById('toast-icon');
+      const text = document.getElementById('toast-text');
+
+      text.innerText = msg;
+      
+      let bgClass = "bg-slate-800 text-white";
+      let iconClass = "fa-circle-info";
+
+      if (type === "success") {
+        bgClass = "bg-emerald-600 text-white";
+        iconClass = "fa-circle-check";
+      } else if (type === "warning") {
+        bgClass = "bg-amber-500 text-white";
+        iconClass = "fa-triangle-exclamation";
+      } else if (type === "error") {
+        bgClass = "bg-red-600 text-white";
+        iconClass = "fa-circle-xmark";
+      }
+
+      toast.className = `transition-all duration-300 p-4 rounded-xl text-sm font-semibold shadow-md flex items-center justify-between ${bgClass}`;
+      icon.className = `fa-solid ${iconClass}`;
+      toast.classList.remove('hidden');
+
+      setTimeout(() => { hideToast(); }, 4000);
+    }
+
+    function hideToast() {
+      document.getElementById('toast-message').classList.add('hidden');
+    }
+
+    function formatDate(dateStr) {
+      if (!dateStr) return '';
+      const parts = dateStr.split('-');
+      if (parts.length === 3) return `${parts[2]}/${parts[1]}/${parts[0]}`;
+      return dateStr;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, function(m) {
+        return {
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#039;'
+        }[m];
+      });
+    }
+  </script>
+</body>
+</html>
