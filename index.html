@@ -402,7 +402,7 @@
 
       <div class="p-5 space-y-4 text-slate-700 text-sm">
         <p class="text-xs text-slate-500">
-          Configurá tus credenciales de GitHub para respaldar tus reportes en la nube automáticamente o cuando tengas conexión.
+          Configurá tus credenciales de GitHub para respaldar y sincronizar tus reportes en la nube entre todos tus dispositivos.
         </p>
 
         <div>
@@ -440,13 +440,21 @@
 
     window.addEventListener('DOMContentLoaded', () => {
       document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
-      loadLocalReports();
       loadConfig();
+      loadLocalReports();
       updateLastBackupLabel();
       updateOnlineStatus();
 
-      window.addEventListener('online', updateOnlineStatus);
+      window.addEventListener('online', () => {
+        updateOnlineStatus();
+        if (config.token && config.gistId) syncWithGist(true);
+      });
       window.addEventListener('offline', updateOnlineStatus);
+
+      // Sincronización automática al abrir la app
+      if (navigator.onLine && config.token && config.gistId) {
+        syncWithGist(true);
+      }
     });
 
     function loadLocalReports() {
@@ -458,7 +466,7 @@
           reports = [];
         }
       } else {
-        reports = [{
+        reports = (config.token && config.gistId) ? [] : [{
           id: 'demo-1',
           fecha: '2026-10-08',
           campo: 'Chacra Quico',
@@ -499,6 +507,9 @@
       localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
       toggleConfigModal(false);
       showToast("Configuración guardada", "success");
+      if (navigator.onLine && config.token && config.gistId) {
+        syncWithGist(false);
+      }
     }
 
     function updateOnlineStatus() {
@@ -709,7 +720,7 @@
     const EXCEL_STYLES = {
       bannerTitle: {
         font: { name: "Calibri", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
-        fill: { fgColor: { rgb: "14532D" } }, // Verde Agrícola Oscuro
+        fill: { fgColor: { rgb: "14532D" } },
         alignment: { horizontal: "left", vertical: "center", indent: 1 }
       },
       bannerSubtitle: {
@@ -797,11 +808,11 @@
       let fontRgb = "1E293B";
 
       if (alertType === "YES") {
-        bgRgb = "FEE2E2"; // Rojo suave alerta aplicar
+        bgRgb = "FEE2E2";
         fontRgb = "991B1B";
         isBold = true;
       } else if (alertType === "NO") {
-        bgRgb = "DCFCE7"; // Verde suave OK
+        bgRgb = "DCFCE7";
         fontRgb = "166534";
         isBold = true;
       }
@@ -824,9 +835,8 @@
 
     function buildProfessionalTabularSheet(reportList, titleText, subtitleText) {
       const ws = {};
-      const totalCols = 11; // A hasta K (0 a 10)
+      const totalCols = 11;
 
-      // 1. Banner Superior (Filas 1 y 2 -> índices 0 y 1)
       ws["A1"] = { v: titleText, t: "s", s: EXCEL_STYLES.bannerTitle };
       ws["A2"] = { v: subtitleText, t: "s", s: EXCEL_STYLES.bannerSubtitle };
       for (let c = 1; c < totalCols; c++) {
@@ -835,8 +845,7 @@
         ws[`${colLetter}2`] = { v: "", t: "s", s: EXCEL_STYLES.bannerSubtitle };
       }
 
-      // 2. Tarjetas Resumen / KPIs con fórmulas dinámicas de Excel (Filas 4 y 5 -> índices 3 y 4)
-      const startDataRow = 8; // Fila 8 en Excel (índice 7)
+      const startDataRow = 8;
       const endDataRow = startDataRow + reportList.length - 1;
 
       const kpiCards = [
@@ -861,7 +870,6 @@
         kpiMerges.push({ s: { r: 4, c: kpi.colStart }, e: { r: 4, c: kpi.colEnd } });
       });
 
-      // 3. Encabezados de Tabla Profesional (Fila 7 -> índice 6)
       const headers = [
         "N°",
         "Fecha",
@@ -881,19 +889,18 @@
         ws[cellRef] = { v: h, t: "s", s: EXCEL_STYLES.tableHeader };
       });
 
-      // 4. Filas de Datos con formato cebra, alineación inteligente y semáforo
       const rowHeights = [
-        { hpt: 28 }, // Fila 1 Banner
-        { hpt: 20 }, // Fila 2 Subtítulo
-        { hpt: 10 }, // Fila 3 Espacio
-        { hpt: 18 }, // Fila 4 KPI Label
-        { hpt: 24 }, // Fila 5 KPI Value
-        { hpt: 12 }, // Fila 6 Espacio
-        { hpt: 28 }  // Fila 7 Encabezados
+        { hpt: 28 },
+        { hpt: 20 },
+        { hpt: 10 },
+        { hpt: 18 },
+        { hpt: 24 },
+        { hpt: 12 },
+        { hpt: 28 }
       ];
 
       reportList.forEach((r, idx) => {
-        const excelRowIdx = 7 + idx; // base 0
+        const excelRowIdx = 7 + idx;
         const isEven = idx % 2 === 1;
         const supVal = r.sup !== "" && r.sup !== null && !isNaN(parseFloat(r.sup)) ? parseFloat(r.sup) : null;
 
@@ -918,13 +925,11 @@
           ws[ref] = cellObj;
         });
 
-        // Calcular altura dinámica según longitud de observaciones
         const obsLen = (r.observaciones || "").length;
         const dynamicHeight = obsLen > 90 ? 46 : (obsLen > 45 ? 34 : 24);
         rowHeights.push({ hpt: dynamicHeight });
       });
 
-      // 5. Fila de Totales al pie de la tabla (con fórmula SUMA en Superficie)
       const totalRowIdx = 7 + reportList.length;
       for (let c = 0; c < totalCols; c++) {
         const ref = XLSX.utils.encode_cell({ r: totalRowIdx, c });
@@ -938,20 +943,19 @@
       }
       rowHeights.push({ hpt: 25 });
 
-      // Rango de la hoja, anchos de columna, combinaciones y autofiltro
       ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: totalRowIdx, c: totalCols - 1 } });
       ws["!cols"] = [
-        { wch: 5 },  // N°
-        { wch: 13 }, // Fecha
-        { wch: 22 }, // Campo
-        { wch: 10 }, // Lote
-        { wch: 16 }, // Superficie (ha)
-        { wch: 18 }, // Cultivo
-        { wch: 24 }, // Estado del Lote
-        { wch: 24 }, // Plagas
-        { wch: 26 }, // Malezas
-        { wch: 13 }, // ¿Aplicar?
-        { wch: 48 }  // Observaciones Técnicas
+        { wch: 5 },
+        { wch: 13 },
+        { wch: 22 },
+        { wch: 10 },
+        { wch: 16 },
+        { wch: 18 },
+        { wch: 24 },
+        { wch: 24 },
+        { wch: 26 },
+        { wch: 13 },
+        { wch: 48 }
       ];
       ws["!rows"] = rowHeights;
       ws["!merges"] = [
@@ -960,14 +964,11 @@
         ...kpiMerges
       ];
       ws["!autofilter"] = { ref: `A7:K${endDataRow}` };
-
-      // Configuración de página lista para imprimir en horizontal (A4 Landscape)
       ws["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
 
       return ws;
     }
 
-    // EXPORTAR PLANILLA MAESTRA CONSOLIDADA (TODOS LOS INFORMES EN FILAS TABULARES PROFESIONALES)
     function exportAllToExcel() {
       if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
 
@@ -990,7 +991,6 @@
       showToast("Planilla Excel profesional descargada", "success");
     }
 
-    // EXPORTAR UN REPORTE INDIVIDUAL CON EL MISMO DISEÑO TABULAR PROFESIONAL
     function exportSingleToExcel(id) {
       if (!id) return;
       const r = reports.find(item => item.id === id);
@@ -1063,7 +1063,7 @@
               event.target.value = '';
               return;
             }
-            reports = incomingReports;
+            reports = incomingReports.map(r => ({ ...r, pendingSync: true }));
             showToast(`Restaurados ${reports.length} reportes`, "success");
           } else {
             const existingIds = new Set(reports.map(r => r.id));
@@ -1074,7 +1074,8 @@
                 if (!item.id || !existingIds.has(item.id)) {
                   const cleanItem = {
                     ...item,
-                    id: item.id || ('rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6))
+                    id: item.id || ('rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+                    pendingSync: true
                   };
                   reports.push(cleanItem);
                   existingIds.add(cleanItem.id);
@@ -1125,24 +1126,50 @@
       else modal.classList.add('hidden');
     }
 
-    function deleteReport(id) {
-      if (confirm("¿Estás seguro de eliminar este reporte local?")) {
+    async function deleteReport(id) {
+      if (confirm("¿Estás seguro de eliminar este reporte?")) {
         reports = reports.filter(r => r.id !== id);
         saveLocalReports();
         renderReportsList();
         showToast("Reporte eliminado", "info");
+
+        // Actualizar también en GitHub Gist para que no reaparezca al sincronizar
+        if (navigator.onLine && config.token && config.gistId) {
+          try {
+            await fetch(`https://api.github.com/gists/${config.gistId}`, {
+              method: 'PATCH',
+              headers: {
+                'Authorization': `Bearer ${config.token}`,
+                'Accept': 'application/vnd.github+json',
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                description: "Reportes de Monitoreo Agrícola",
+                files: {
+                  "reportes_campo.json": {
+                    content: JSON.stringify(reports, null, 2)
+                  }
+                }
+              })
+            });
+          } catch (e) {
+            console.warn("No se pudo reflejar el borrado en la nube:", e);
+          }
+        }
       }
     }
 
-    async function syncWithGist() {
+    async function syncWithGist(silent = false) {
       if (!navigator.onLine) {
-        showToast("Sin señal de internet.", "warning");
+        if (!silent) showToast("Sin señal de internet.", "warning");
         return;
       }
 
       if (!config.token) {
-        showToast("Configurá tu Token de GitHub primero.", "warning");
-        toggleConfigModal(true);
+        if (!silent) {
+          showToast("Configurá tu Token de GitHub primero.", "warning");
+          toggleConfigModal(true);
+        }
         return;
       }
 
@@ -1150,15 +1177,69 @@
       syncIcon.classList.add('fa-spin');
 
       try {
+        let cloudReports = [];
+
+        // PASO 1: Descargar primero los reportes existentes en GitHub Gist (GET)
+        if (config.gistId) {
+          const getResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
+            method: 'GET',
+            headers: {
+              'Authorization': `Bearer ${config.token}`,
+              'Accept': 'application/vnd.github+json'
+            },
+            cache: 'no-store'
+          });
+
+          if (!getResponse.ok) {
+            throw new Error(`Error al leer Gist (${getResponse.status})`);
+          }
+
+          const gistData = await getResponse.json();
+          const fileContent = gistData.files?.["reportes_campo.json"]?.content;
+
+          if (fileContent) {
+            try {
+              const parsed = JSON.parse(fileContent);
+              if (Array.isArray(parsed)) cloudReports = parsed;
+            } catch (e) {
+              console.warn("El archivo en Gist no tenía JSON válido, se inicializará.");
+            }
+          }
+        }
+
+        // PASO 2: Fusión (Merge) por ID sin duplicar ni borrar pendientes locales
+        const mergedMap = new Map();
+
+        cloudReports.forEach(item => {
+          if (item && item.id) {
+            mergedMap.set(item.id, { ...item, pendingSync: false });
+          }
+        });
+
+        reports.forEach(localItem => {
+          if (localItem && localItem.id) {
+            if (!mergedMap.has(localItem.id) || localItem.pendingSync) {
+              mergedMap.set(localItem.id, { ...localItem, pendingSync: false });
+            }
+          }
+        });
+
+        const unifiedReports = Array.from(mergedMap.values()).sort((a, b) => {
+          const dateDiff = (b.fecha || '').localeCompare(a.fecha || '');
+          if (dateDiff !== 0) return dateDiff;
+          return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
+
+        // PASO 3: Subir la lista unificada a GitHub Gist (PATCH o POST)
         const payloadFiles = {
           "reportes_campo.json": {
-            content: JSON.stringify(reports, null, 2)
+            content: JSON.stringify(unifiedReports, null, 2)
           }
         };
 
-        let response;
+        let saveResponse;
         if (config.gistId) {
-          response = await fetch(`https://api.github.com/gists/${config.gistId}`, {
+          saveResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
             method: 'PATCH',
             headers: {
               'Authorization': `Bearer ${config.token}`,
@@ -1171,7 +1252,7 @@
             })
           });
         } else {
-          response = await fetch(`https://api.github.com/gists`, {
+          saveResponse = await fetch(`https://api.github.com/gists`, {
             method: 'POST',
             headers: {
               'Authorization': `Bearer ${config.token}`,
@@ -1186,23 +1267,24 @@
           });
         }
 
-        if (!response.ok) throw new Error(`Error HTTP: ${response.status}`);
+        if (!saveResponse.ok) throw new Error(`Error al guardar en Gist (${saveResponse.status})`);
 
-        const data = await response.json();
+        const savedData = await saveResponse.json();
         
-        if (!config.gistId && data.id) {
-          config.gistId = data.id;
+        if (!config.gistId && savedData.id) {
+          config.gistId = savedData.id;
           localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
-          document.getElementById('config-gist-id').value = data.id;
+          document.getElementById('config-gist-id').value = savedData.id;
         }
 
-        reports = reports.map(r => ({ ...r, pendingSync: false }));
+        // PASO 4: Actualizar estado local y pantalla
+        reports = unifiedReports;
         saveLocalReports();
         renderReportsList();
 
-        showToast("Sincronizado con GitHub Gist", "success");
+        if (!silent) showToast(`Sincronizado (${reports.length} reportes)`, "success");
       } catch (err) {
-        showToast("Error en sincronización: " + err.message, "error");
+        if (!silent) showToast("Error en sincronización: " + err.message, "error");
       } finally {
         syncIcon.classList.remove('fa-spin');
       }
