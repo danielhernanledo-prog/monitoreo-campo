@@ -14,6 +14,9 @@
   <!-- html2pdf.js para conversión directa HTML a PDF -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
 
+  <!-- xlsx-js-style (SheetJS con soporte completo de estilos visuales, colores, bordes, fuentes y fórmulas) -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
+
   <script>
     tailwind.config = {
       theme: {
@@ -85,10 +88,15 @@
       </div>
 
       <div class="flex items-center space-x-2">
-        <button id="btn-sync-header" onclick="syncWithGist()" title="Sincronizar ahora"
+        <button id="btn-sync-header" onclick="syncWithGist()" title="Sincronizar con la nube"
           class="relative bg-brand-700 hover:bg-brand-600 active:scale-95 text-white p-2.5 rounded-xl border border-brand-600 flex items-center justify-center transition">
           <i id="sync-icon" class="fa-solid fa-rotate text-lg"></i>
           <span id="badge-pending-count" class="hidden absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full border-2 border-brand-800">0</span>
+        </button>
+
+        <button onclick="toggleBackupModal(true)" title="Copias de Seguridad (Backup y Restauración)"
+          class="bg-brand-700 hover:bg-brand-600 active:scale-95 text-white p-2.5 rounded-xl border border-brand-600 flex items-center justify-center transition">
+          <i class="fa-solid fa-shield-halved text-lg"></i>
         </button>
 
         <button onclick="toggleConfigModal(true)" title="Configuración de Sync"
@@ -224,17 +232,40 @@
     <!-- HISTORIAL DE REPORTES -->
     <section id="section-history" class="hidden space-y-3 no-print">
       
-      <div class="bg-white p-3 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center text-xs">
-        <span class="font-bold text-slate-600">Exportar Todo:</span>
-        <div class="flex space-x-2">
-          <button onclick="exportToCSV()" class="bg-emerald-100 text-emerald-800 font-bold px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-200 flex items-center space-x-1">
-            <i class="fa-solid fa-file-csv"></i>
-            <span>CSV</span>
-          </button>
-          <button onclick="exportToJSON()" class="bg-blue-100 text-blue-800 font-bold px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-200 flex items-center space-x-1">
-            <i class="fa-solid fa-file-code"></i>
-            <span>JSON</span>
-          </button>
+      <!-- BARRA DE EXPORTACIÓN Y COPIA DE SEGURIDAD -->
+      <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2.5 text-xs">
+        <div class="flex flex-wrap justify-between items-center gap-2">
+          <span class="font-bold text-slate-700 flex items-center space-x-1">
+            <i class="fa-solid fa-table text-green-700"></i>
+            <span>Planilla Maestra:</span>
+          </span>
+          <div class="flex flex-wrap gap-1.5">
+            <button onclick="exportAllToExcel()" class="bg-green-700 text-white font-bold px-3.5 py-2 rounded-lg shadow-sm hover:bg-green-800 flex items-center space-x-1.5 transition">
+              <i class="fa-solid fa-file-excel text-sm"></i>
+              <span>Descargar Excel (.xlsx)</span>
+            </button>
+            <button onclick="exportToCSV()" class="bg-emerald-100 text-emerald-800 font-bold px-2.5 py-2 rounded-lg border border-emerald-200 hover:bg-emerald-200 flex items-center space-x-1 transition">
+              <i class="fa-solid fa-file-csv"></i>
+              <span>CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="border-t border-slate-100 pt-2.5 flex flex-wrap justify-between items-center gap-2">
+          <span class="font-bold text-slate-600 flex items-center space-x-1">
+            <i class="fa-solid fa-shield-halved text-brand-700"></i>
+            <span>Respaldo / Backup:</span>
+          </span>
+          <div class="flex gap-1.5">
+            <button onclick="downloadBackup()" class="bg-slate-800 text-white font-bold px-2.5 py-1.5 rounded-lg hover:bg-slate-700 flex items-center space-x-1 transition">
+              <i class="fa-solid fa-download"></i>
+              <span>Guardar Copia</span>
+            </button>
+            <button onclick="toggleBackupModal(true)" class="bg-amber-100 text-amber-800 font-bold px-2.5 py-1.5 rounded-lg border border-amber-200 hover:bg-amber-200 flex items-center space-x-1 transition">
+              <i class="fa-solid fa-upload"></i>
+              <span>Restaurar</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -245,14 +276,14 @@
 
   </main>
 
-  <!-- MODAL DE VISTA PREVIA IMPRESIÓN / DESCARGA PDF -->
+  <!-- MODAL DE VISTA PREVIA IMPRESIÓN / DESCARGA PDF Y EXCEL -->
   <div id="modal-print-preview" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 hidden flex flex-col items-center justify-center p-3">
     <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
       
       <div class="bg-slate-800 text-white p-4 flex justify-between items-center no-print">
         <h3 class="font-bold text-base flex items-center space-x-2">
-          <i class="fa-solid fa-file-pdf text-red-400"></i>
-          <span>Reporte PDF de Campo</span>
+          <i class="fa-solid fa-file-lines text-emerald-400"></i>
+          <span>Vista Previa de Reporte</span>
         </h3>
         <button onclick="togglePrintModal(false)" class="text-slate-400 hover:text-white">
           <i class="fa-solid fa-xmark text-xl"></i>
@@ -264,19 +295,94 @@
         <!-- Contenido dinámico del reporte -->
       </div>
 
-      <!-- BOTONES DE ACCIÓN PARA PDF Y PRINT -->
+      <!-- BOTONES DE ACCIÓN PARA EXCEL, PDF Y PRINT -->
       <div class="p-4 bg-slate-100 border-t border-slate-200 flex flex-wrap justify-end gap-2 no-print">
-        <button onclick="togglePrintModal(false)" class="px-3.5 py-2 rounded-xl border border-slate-300 font-bold text-slate-600 hover:bg-slate-200 text-xs">
-          Cancelar
+        <button onclick="togglePrintModal(false)" class="px-3 py-2 rounded-xl border border-slate-300 font-bold text-slate-600 hover:bg-slate-200 text-xs">
+          Cerrar
         </button>
-        <button onclick="downloadPdfDirect()" class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
+        <button onclick="exportSingleToExcel(currentReportForPdf?.id)" class="px-3.5 py-2 rounded-xl bg-green-700 hover:bg-green-800 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
+          <i class="fa-solid fa-file-excel"></i>
+          <span>Hoja Excel</span>
+        </button>
+        <button onclick="downloadPdfDirect()" class="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
           <i class="fa-solid fa-file-arrow-down"></i>
-          <span>Descargar PDF Directo</span>
+          <span>Descargar PDF</span>
         </button>
-        <button onclick="window.print()" class="px-4 py-2 rounded-xl bg-slate-700 hover:bg-slate-800 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
+        <button onclick="window.print()" class="px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-800 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
           <i class="fa-solid fa-print"></i>
-          <span>Imprimir / Enviar</span>
+          <span>Imprimir</span>
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE COPIA DE SEGURIDAD (BACKUP Y RESTAURACIÓN) -->
+  <div id="modal-backup" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4 no-print">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-xl overflow-hidden">
+      <div class="bg-slate-800 text-white p-4 flex justify-between items-center">
+        <h3 class="font-bold text-lg flex items-center space-x-2">
+          <i class="fa-solid fa-shield-halved text-emerald-400"></i>
+          <span>Copia de Seguridad</span>
+        </h3>
+        <button onclick="toggleBackupModal(false)" class="text-slate-300 hover:text-white">
+          <i class="fa-solid fa-xmark text-xl"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-5 text-slate-700 text-sm">
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between text-xs">
+          <span class="text-slate-500 font-medium">Última copia descargada:</span>
+          <span id="last-backup-label" class="font-bold text-slate-800">Sin registro aún</span>
+        </div>
+
+        <div class="space-y-2">
+          <h4 class="font-bold text-slate-800 flex items-center space-x-1.5">
+            <i class="fa-solid fa-download text-brand-600"></i>
+            <span>1. Crear Copia de Seguridad</span>
+          </h4>
+          <p class="text-xs text-slate-500">
+            Descargá un archivo de respaldo con todos tus reportes cargados para guardarlo en Dropbox, Drive, WhatsApp o en tu computadora.
+          </p>
+          <button onclick="downloadBackup()" class="w-full py-3 rounded-xl bg-brand-600 hover:bg-brand-700 text-white font-bold shadow-md flex items-center justify-center space-x-2 transition">
+            <i class="fa-solid fa-file-export"></i>
+            <span>Descargar Archivo de Respaldo (.json)</span>
+          </button>
+        </div>
+
+        <hr class="border-slate-200">
+
+        <div class="space-y-2.5">
+          <h4 class="font-bold text-slate-800 flex items-center space-x-1.5">
+            <i class="fa-solid fa-upload text-amber-600"></i>
+            <span>2. Restaurar desde Archivo</span>
+          </h4>
+          <p class="text-xs text-slate-500">
+            Seleccioná un archivo de copia de seguridad previo para recuperar reportes en este dispositivo.
+          </p>
+
+          <div class="flex items-center space-x-3 text-xs bg-amber-50/70 border border-amber-200 p-2.5 rounded-xl">
+            <label class="flex items-center space-x-1.5 cursor-pointer font-semibold text-slate-700">
+              <input type="radio" name="restore-mode" value="merge" checked class="accent-brand-600">
+              <span>Combinar (sin borrar los actuales)</span>
+            </label>
+            <label class="flex items-center space-x-1.5 cursor-pointer font-semibold text-slate-700">
+              <input type="radio" name="restore-mode" value="replace" class="accent-red-600">
+              <span>Reemplazar todo</span>
+            </label>
+          </div>
+
+          <input type="file" id="backup-file-input" accept=".json,application/json" onchange="handleRestoreFile(event)" class="hidden">
+          <button onclick="document.getElementById('backup-file-input').click()" class="w-full py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-300 font-bold flex items-center justify-center space-x-2 transition">
+            <i class="fa-solid fa-folder-open text-amber-600"></i>
+            <span>Seleccionar Archivo y Restaurar</span>
+          </button>
+        </div>
+
+        <div class="pt-1 flex justify-end">
+          <button onclick="toggleBackupModal(false)" class="px-4 py-2 rounded-xl border border-slate-300 font-bold text-slate-600 hover:bg-slate-50 text-xs">
+            Cerrar
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -326,6 +432,7 @@
   <script>
     const STORAGE_KEY = 'agri_reports_data';
     const CONFIG_KEY = 'agri_gist_config';
+    const LAST_BACKUP_KEY = 'agri_last_backup_date';
 
     let reports = [];
     let config = { token: '', gistId: '' };
@@ -335,6 +442,7 @@
       document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
       loadLocalReports();
       loadConfig();
+      updateLastBackupLabel();
       updateOnlineStatus();
 
       window.addEventListener('online', updateOnlineStatus);
@@ -455,13 +563,17 @@
           
           <div class="absolute top-0 left-0 bottom-0 w-1.5 ${r.pendingSync ? 'bg-amber-500' : 'bg-emerald-500'}"></div>
 
-          <div class="flex justify-between items-start pl-2">
+          <div class="flex justify-between items-start pl-2 gap-2">
             <div>
               <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">${formatDate(r.fecha)}</span>
               <h3 class="font-bold text-slate-800 text-lg leading-tight">${escapeHtml(r.campo)} - Lote ${escapeHtml(r.lote)}</h3>
             </div>
-            <div class="flex items-center space-x-1">
-              <button onclick="printSingleReport('${r.id}')" title="Generar / Descargar PDF" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
+            <div class="flex items-center space-x-1 shrink-0">
+              <button onclick="exportSingleToExcel('${r.id}')" title="Descargar en formato Excel (.xlsx)" class="text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 p-2 rounded-lg border border-green-200 transition flex items-center space-x-1 text-xs font-bold">
+                <i class="fa-solid fa-file-excel text-sm"></i>
+                <span>XLS</span>
+              </button>
+              <button onclick="printSingleReport('${r.id}')" title="Vista Previa / PDF / Imprimir" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
                 <i class="fa-solid fa-file-pdf text-sm"></i>
                 <span>PDF</span>
               </button>
@@ -591,6 +703,422 @@
       showToast("Descargando PDF...", "success");
     }
 
+    // =========================================================================
+    // MOTOR DE DISEÑO PROFESIONAL PARA EXCEL (.XLSX) CON ESTILOS, FÓRMULAS Y KPIs
+    // =========================================================================
+    const EXCEL_STYLES = {
+      bannerTitle: {
+        font: { name: "Calibri", sz: 15, bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "14532D" } }, // Verde Agrícola Oscuro
+        alignment: { horizontal: "left", vertical: "center", indent: 1 }
+      },
+      bannerSubtitle: {
+        font: { name: "Calibri", sz: 10, italic: true, color: { rgb: "DCFCE7" } },
+        fill: { fgColor: { rgb: "166534" } },
+        alignment: { horizontal: "left", vertical: "center", indent: 1 }
+      },
+      kpiLabel: {
+        font: { name: "Calibri", sz: 9, bold: true, color: { rgb: "475569" } },
+        fill: { fgColor: { rgb: "F1F5F9" } },
+        alignment: { horizontal: "center", vertical: "center" },
+        border: {
+          top: { style: "thin", color: { rgb: "CBD5E1" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } }
+        }
+      },
+      kpiValue: {
+        font: { name: "Calibri", sz: 13, bold: true, color: { rgb: "0F172A" } },
+        fill: { fgColor: { rgb: "FFFFFF" } },
+        alignment: { horizontal: "center", vertical: "center" },
+        border: {
+          bottom: { style: "medium", color: { rgb: "166534" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } }
+        }
+      },
+      kpiValueAlert: {
+        font: { name: "Calibri", sz: 13, bold: true, color: { rgb: "B91C1C" } },
+        fill: { fgColor: { rgb: "FEF2F2" } },
+        alignment: { horizontal: "center", vertical: "center" },
+        border: {
+          bottom: { style: "medium", color: { rgb: "DC2626" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } }
+        }
+      },
+      tableHeader: {
+        font: { name: "Calibri", sz: 11, bold: true, color: { rgb: "FFFFFF" } },
+        fill: { fgColor: { rgb: "166534" } },
+        alignment: { horizontal: "center", vertical: "center", wrapText: true },
+        border: {
+          top: { style: "medium", color: { rgb: "14532D" } },
+          bottom: { style: "medium", color: { rgb: "14532D" } },
+          left: { style: "thin", color: { rgb: "22C55E" } },
+          right: { style: "thin", color: { rgb: "22C55E" } }
+        }
+      },
+      totalRowLabel: {
+        font: { name: "Calibri", sz: 11, bold: true, color: { rgb: "14532D" } },
+        fill: { fgColor: { rgb: "DCFCE7" } },
+        alignment: { horizontal: "right", vertical: "center" },
+        border: {
+          top: { style: "medium", color: { rgb: "166534" } },
+          bottom: { style: "double", color: { rgb: "166534" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } }
+        }
+      },
+      totalRowValue: {
+        font: { name: "Calibri", sz: 11, bold: true, color: { rgb: "14532D" } },
+        fill: { fgColor: { rgb: "DCFCE7" } },
+        alignment: { horizontal: "right", vertical: "center" },
+        numFmt: "#,##0.0",
+        border: {
+          top: { style: "medium", color: { rgb: "166534" } },
+          bottom: { style: "double", color: { rgb: "166534" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } }
+        }
+      },
+      totalRowEmpty: {
+        fill: { fgColor: { rgb: "DCFCE7" } },
+        border: {
+          top: { style: "medium", color: { rgb: "166534" } },
+          bottom: { style: "double", color: { rgb: "166534" } },
+          left: { style: "thin", color: { rgb: "CBD5E1" } },
+          right: { style: "thin", color: { rgb: "CBD5E1" } }
+        }
+      }
+    };
+
+    function getDataCellStyle(isEvenRow, align = "left", isBold = false, alertType = null, numFmt = null) {
+      let bgRgb = isEvenRow ? "F8FAFC" : "FFFFFF";
+      let fontRgb = "1E293B";
+
+      if (alertType === "YES") {
+        bgRgb = "FEE2E2"; // Rojo suave alerta aplicar
+        fontRgb = "991B1B";
+        isBold = true;
+      } else if (alertType === "NO") {
+        bgRgb = "DCFCE7"; // Verde suave OK
+        fontRgb = "166534";
+        isBold = true;
+      }
+
+      const style = {
+        font: { name: "Calibri", sz: 10.5, bold: isBold, color: { rgb: fontRgb } },
+        fill: { fgColor: { rgb: bgRgb } },
+        alignment: { horizontal: align, vertical: "center", wrapText: true },
+        border: {
+          top: { style: "thin", color: { rgb: "E2E8F0" } },
+          bottom: { style: "thin", color: { rgb: "E2E8F0" } },
+          left: { style: "thin", color: { rgb: "E2E8F0" } },
+          right: { style: "thin", color: { rgb: "E2E8F0" } }
+        }
+      };
+
+      if (numFmt) style.numFmt = numFmt;
+      return style;
+    }
+
+    function buildProfessionalTabularSheet(reportList, titleText, subtitleText) {
+      const ws = {};
+      const totalCols = 11; // A hasta K (0 a 10)
+
+      // 1. Banner Superior (Filas 1 y 2 -> índices 0 y 1)
+      ws["A1"] = { v: titleText, t: "s", s: EXCEL_STYLES.bannerTitle };
+      ws["A2"] = { v: subtitleText, t: "s", s: EXCEL_STYLES.bannerSubtitle };
+      for (let c = 1; c < totalCols; c++) {
+        const colLetter = XLSX.utils.encode_col(c);
+        ws[`${colLetter}1`] = { v: "", t: "s", s: EXCEL_STYLES.bannerTitle };
+        ws[`${colLetter}2`] = { v: "", t: "s", s: EXCEL_STYLES.bannerSubtitle };
+      }
+
+      // 2. Tarjetas Resumen / KPIs con fórmulas dinámicas de Excel (Filas 4 y 5 -> índices 3 y 4)
+      const startDataRow = 8; // Fila 8 en Excel (índice 7)
+      const endDataRow = startDataRow + reportList.length - 1;
+
+      const kpiCards = [
+        { colStart: 0, colEnd: 1, label: "LOTES RELEVADOS", formula: `COUNTA(B${startDataRow}:B${endDataRow})`, isAlert: false, fmt: "#,##0" },
+        { colStart: 2, colEnd: 3, label: "SUPERFICIE TOTAL (HA)", formula: `SUM(E${startDataRow}:E${endDataRow})`, isAlert: false, fmt: "#,##0.0" },
+        { colStart: 4, colEnd: 5, label: "SUPERFICIE A APLICAR (HA)", formula: `SUMIF(J${startDataRow}:J${endDataRow},"SÍ",E${startDataRow}:E${endDataRow})`, isAlert: true, fmt: "#,##0.0" },
+        { colStart: 6, colEnd: 7, label: "LOTES CON APLICACIÓN", formula: `COUNTIF(J${startDataRow}:J${endDataRow},"SÍ")`, isAlert: true, fmt: "#,##0" }
+      ];
+
+      const kpiMerges = [];
+      kpiCards.forEach(kpi => {
+        const startCol = XLSX.utils.encode_col(kpi.colStart);
+        const endCol = XLSX.utils.encode_col(kpi.colEnd);
+        ws[`${startCol}4`] = { v: kpi.label, t: "s", s: EXCEL_STYLES.kpiLabel };
+        ws[`${endCol}4`] = { v: "", t: "s", s: EXCEL_STYLES.kpiLabel };
+
+        const valStyle = { ...(kpi.isAlert ? EXCEL_STYLES.kpiValueAlert : EXCEL_STYLES.kpiValue), numFmt: kpi.fmt };
+        ws[`${startCol}5`] = { f: kpi.formula, t: "n", s: valStyle };
+        ws[`${endCol}5`] = { v: "", t: "s", s: valStyle };
+
+        kpiMerges.push({ s: { r: 3, c: kpi.colStart }, e: { r: 3, c: kpi.colEnd } });
+        kpiMerges.push({ s: { r: 4, c: kpi.colStart }, e: { r: 4, c: kpi.colEnd } });
+      });
+
+      // 3. Encabezados de Tabla Profesional (Fila 7 -> índice 6)
+      const headers = [
+        "N°",
+        "Fecha",
+        "Campo",
+        "Lote",
+        "Superficie (ha)",
+        "Cultivo",
+        "Estado del Lote",
+        "Plagas",
+        "Malezas",
+        "¿Aplicar?",
+        "Observaciones Técnicas"
+      ];
+
+      headers.forEach((h, cIdx) => {
+        const cellRef = XLSX.utils.encode_cell({ r: 6, c: cIdx });
+        ws[cellRef] = { v: h, t: "s", s: EXCEL_STYLES.tableHeader };
+      });
+
+      // 4. Filas de Datos con formato cebra, alineación inteligente y semáforo
+      const rowHeights = [
+        { hpt: 28 }, // Fila 1 Banner
+        { hpt: 20 }, // Fila 2 Subtítulo
+        { hpt: 10 }, // Fila 3 Espacio
+        { hpt: 18 }, // Fila 4 KPI Label
+        { hpt: 24 }, // Fila 5 KPI Value
+        { hpt: 12 }, // Fila 6 Espacio
+        { hpt: 28 }  // Fila 7 Encabezados
+      ];
+
+      reportList.forEach((r, idx) => {
+        const excelRowIdx = 7 + idx; // base 0
+        const isEven = idx % 2 === 1;
+        const supVal = r.sup !== "" && r.sup !== null && !isNaN(parseFloat(r.sup)) ? parseFloat(r.sup) : null;
+
+        const rowCells = [
+          { v: idx + 1, t: "n", s: getDataCellStyle(isEven, "center", false, null, "0") },
+          { v: formatDate(r.fecha), t: "s", s: getDataCellStyle(isEven, "center", false) },
+          { v: r.campo || "-", t: "s", s: getDataCellStyle(isEven, "left", true) },
+          { v: r.lote || "-", t: "s", s: getDataCellStyle(isEven, "center", true) },
+          supVal !== null
+            ? { v: supVal, t: "n", s: getDataCellStyle(isEven, "right", false, null, "#,##0.0") }
+            : { v: "-", t: "s", s: getDataCellStyle(isEven, "center", false) },
+          { v: r.cultivo || "-", t: "s", s: getDataCellStyle(isEven, "left", false) },
+          { v: r.estado || "-", t: "s", s: getDataCellStyle(isEven, "left", false) },
+          { v: r.plagas || "Sin plagas", t: "s", s: getDataCellStyle(isEven, "left", false) },
+          { v: r.malezas || "Sin malezas", t: "s", s: getDataCellStyle(isEven, "left", false) },
+          { v: r.aplicar ? "SÍ" : "NO", t: "s", s: getDataCellStyle(isEven, "center", true, r.aplicar ? "YES" : "NO") },
+          { v: r.observaciones || "-", t: "s", s: getDataCellStyle(isEven, "left", false) }
+        ];
+
+        rowCells.forEach((cellObj, cIdx) => {
+          const ref = XLSX.utils.encode_cell({ r: excelRowIdx, c: cIdx });
+          ws[ref] = cellObj;
+        });
+
+        // Calcular altura dinámica según longitud de observaciones
+        const obsLen = (r.observaciones || "").length;
+        const dynamicHeight = obsLen > 90 ? 46 : (obsLen > 45 ? 34 : 24);
+        rowHeights.push({ hpt: dynamicHeight });
+      });
+
+      // 5. Fila de Totales al pie de la tabla (con fórmula SUMA en Superficie)
+      const totalRowIdx = 7 + reportList.length;
+      for (let c = 0; c < totalCols; c++) {
+        const ref = XLSX.utils.encode_cell({ r: totalRowIdx, c });
+        if (c === 3) {
+          ws[ref] = { v: "TOTAL HA:", t: "s", s: EXCEL_STYLES.totalRowLabel };
+        } else if (c === 4) {
+          ws[ref] = { f: `SUM(E${startDataRow}:E${endDataRow})`, t: "n", s: EXCEL_STYLES.totalRowValue };
+        } else {
+          ws[ref] = { v: "", t: "s", s: EXCEL_STYLES.totalRowEmpty };
+        }
+      }
+      rowHeights.push({ hpt: 25 });
+
+      // Rango de la hoja, anchos de columna, combinaciones y autofiltro
+      ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: totalRowIdx, c: totalCols - 1 } });
+      ws["!cols"] = [
+        { wch: 5 },  // N°
+        { wch: 13 }, // Fecha
+        { wch: 22 }, // Campo
+        { wch: 10 }, // Lote
+        { wch: 16 }, // Superficie (ha)
+        { wch: 18 }, // Cultivo
+        { wch: 24 }, // Estado del Lote
+        { wch: 24 }, // Plagas
+        { wch: 26 }, // Malezas
+        { wch: 13 }, // ¿Aplicar?
+        { wch: 48 }  // Observaciones Técnicas
+      ];
+      ws["!rows"] = rowHeights;
+      ws["!merges"] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: totalCols - 1 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: totalCols - 1 } },
+        ...kpiMerges
+      ];
+      ws["!autofilter"] = { ref: `A7:K${endDataRow}` };
+
+      // Configuración de página lista para imprimir en horizontal (A4 Landscape)
+      ws["!pageSetup"] = { orientation: "landscape", paperSize: 9, fitToWidth: 1, fitToHeight: 0 };
+
+      return ws;
+    }
+
+    // EXPORTAR PLANILLA MAESTRA CONSOLIDADA (TODOS LOS INFORMES EN FILAS TABULARES PROFESIONALES)
+    function exportAllToExcel() {
+      if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
+
+      if (typeof XLSX === 'undefined') {
+        return showToast("Librería Excel no disponible (revisá conexión)", "error");
+      }
+
+      const wb = XLSX.utils.book_new();
+      const fechaHoy = new Date().toLocaleDateString('es-AR');
+      const ws = buildProfessionalTabularSheet(
+        reports,
+        "REGISTRO CONSOLIDADO DE MONITOREO AGRÍCOLA",
+        `Planilla Técnica de Seguimiento de Lotes  |  Emitido el ${fechaHoy}`
+      );
+
+      XLSX.utils.book_append_sheet(wb, ws, "Monitoreo de Lotes");
+
+      const filename = `Planilla_Monitoreo_Campo_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, filename);
+      showToast("Planilla Excel profesional descargada", "success");
+    }
+
+    // EXPORTAR UN REPORTE INDIVIDUAL CON EL MISMO DISEÑO TABULAR PROFESIONAL
+    function exportSingleToExcel(id) {
+      if (!id) return;
+      const r = reports.find(item => item.id === id);
+      if (!r) return;
+
+      if (typeof XLSX === 'undefined') {
+        return showToast("Librería Excel no disponible (revisá conexión)", "error");
+      }
+
+      const wb = XLSX.utils.book_new();
+      const ws = buildProfessionalTabularSheet(
+        [r],
+        `REPORTE DE MONITOREO AGRÍCOLA - ${r.campo.toUpperCase()} (LOTE ${r.lote})`,
+        `Recorrida del ${formatDate(r.fecha)}  |  Cultivo: ${r.cultivo}`
+      );
+
+      XLSX.utils.book_append_sheet(wb, ws, "Registro Lote");
+
+      const safeCampo = (r.campo || 'Campo').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const safeLote = (r.lote || 'Lote').replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `Reporte_${safeCampo}_Lote${safeLote}_${r.fecha}.xlsx`;
+
+      XLSX.writeFile(wb, filename);
+      showToast("Hoja Excel descargada", "success");
+    }
+
+    // ==========================================
+    // COPIA DE SEGURIDAD (BACKUP & RESTAURACIÓN)
+    // ==========================================
+    function downloadBackup() {
+      const backupPayload = {
+        app: "Monitoreo Agrícola - Reportes de Campo",
+        version: "2.1",
+        exportedAt: new Date().toISOString(),
+        totalReports: reports.length,
+        reports: reports
+      };
+
+      const now = new Date();
+      const dateStamp = now.toISOString().split('T')[0];
+      const timeStamp = now.toTimeString().slice(0, 5).replace(':', '-');
+      const fileName = `Backup_MonitoreoCampo_${dateStamp}_${timeStamp}.json`;
+
+      downloadFile(JSON.stringify(backupPayload, null, 2), fileName, 'application/json');
+
+      const formattedNow = `${now.toLocaleDateString('es-AR')} ${now.toTimeString().slice(0, 5)}`;
+      localStorage.setItem(LAST_BACKUP_KEY, formattedNow);
+      updateLastBackupLabel();
+      showToast("Copia de seguridad descargada", "success");
+    }
+
+    function handleRestoreFile(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const parsed = JSON.parse(e.target.result);
+          const incomingReports = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.reports) ? parsed.reports : null);
+
+          if (!incomingReports) {
+            throw new Error("El archivo no tiene el formato válido de reportes.");
+          }
+
+          const mode = document.querySelector('input[name="restore-mode"]:checked')?.value || 'merge';
+
+          if (mode === 'replace') {
+            if (!confirm(`Se reemplazarán los ${reports.length} reportes actuales por los ${incomingReports.length} reportes del respaldo. ¿Continuar?`)) {
+              event.target.value = '';
+              return;
+            }
+            reports = incomingReports;
+            showToast(`Restaurados ${reports.length} reportes`, "success");
+          } else {
+            const existingIds = new Set(reports.map(r => r.id));
+            let addedCount = 0;
+
+            incomingReports.forEach(item => {
+              if (item && item.campo && item.fecha) {
+                if (!item.id || !existingIds.has(item.id)) {
+                  const cleanItem = {
+                    ...item,
+                    id: item.id || ('rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6))
+                  };
+                  reports.push(cleanItem);
+                  existingIds.add(cleanItem.id);
+                  addedCount++;
+                }
+              }
+            });
+
+            reports.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+            showToast(`Copia restaurada: +${addedCount} reportes incorporados`, "success");
+          }
+
+          saveLocalReports();
+          renderReportsList();
+          toggleBackupModal(false);
+          switchTab('history');
+        } catch (err) {
+          showToast("Error al leer respaldo: " + err.message, "error");
+        } finally {
+          event.target.value = '';
+        }
+      };
+
+      reader.readAsText(file);
+    }
+
+    function updateLastBackupLabel() {
+      const last = localStorage.getItem(LAST_BACKUP_KEY);
+      const label = document.getElementById('last-backup-label');
+      if (label && last) {
+        label.innerText = last;
+      }
+    }
+
+    function toggleBackupModal(show) {
+      const modal = document.getElementById('modal-backup');
+      if (show) {
+        updateLastBackupLabel();
+        modal.classList.remove('hidden');
+      } else {
+        modal.classList.add('hidden');
+      }
+    }
+
     function togglePrintModal(show) {
       const modal = document.getElementById('modal-print-preview');
       if (show) modal.classList.remove('hidden');
@@ -700,12 +1228,6 @@
 
       const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
       downloadFile(csvContent, `Reportes_Campo_${new Date().toISOString().split('T')[0]}.csv`, 'text/csv;charset=utf-8;');
-    }
-
-    function exportToJSON() {
-      if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
-      const jsonStr = JSON.stringify(reports, null, 2);
-      downloadFile(jsonStr, `Reportes_Campo_${new Date().toISOString().split('T')[0]}.json`, 'application/json');
     }
 
     function downloadFile(content, fileName, mimeType) {
