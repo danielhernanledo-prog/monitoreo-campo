@@ -1047,7 +1047,7 @@
     function downloadBackup() {
       const backupPayload = {
         app: "Monitoreo Agrícola - Reportes de Campo",
-        version: "2.1",
+        version: "2.2",
         exportedAt: new Date().toISOString(),
         totalReports: reports.length,
         reports: reports
@@ -1121,6 +1121,10 @@
           renderReportsList();
           toggleBackupModal(false);
           switchTab('history');
+
+          if (navigator.onLine && config.token && config.gistId) {
+            syncWithGist(true);
+          }
         } catch (err) {
           showToast("Error al leer respaldo: " + err.message, "error");
         } finally {
@@ -1159,7 +1163,7 @@
       const targetId = String(id);
       if (!confirm("¿Estás seguro de eliminar este reporte?")) return;
 
-      // 1. Eliminar localmente y registrar el ID borrado para que la nube no lo resucite
+      // 1. Quitar de la lista visible y guardar en la lista permanente de borrados
       reports = reports.filter(r => String(r.id) !== targetId);
       if (!deletedIds.includes(targetId)) {
         deletedIds.push(targetId);
@@ -1170,9 +1174,9 @@
       renderReportsList();
       showToast("Reporte eliminado", "info");
 
-      // 2. Sincronizar inmediatamente con la nube si hay conexión y credenciales
+      // 2. Sincronizar con GitHub Gist
       if (navigator.onLine && config.token && config.gistId) {
-        await syncWithGist(true);
+        await syncWithGist(false);
       }
     }
 
@@ -1200,15 +1204,14 @@
         let cloudReports = [];
         let cloudDeletedIds = [];
 
-        // PASO 1: Descargar primero los reportes existentes en GitHub Gist (GET)
+        // PASO 1: Leer datos actuales del Gist evitando caché del navegador con timestamp
         if (config.gistId) {
-          const getResponse = await fetch(`https://api.github.com/gists/${config.gistId}`, {
+          const getResponse = await fetch(`https://api.github.com/gists/${config.gistId}?t=${Date.now()}`, {
             method: 'GET',
             headers: {
               'Authorization': `Bearer ${config.token}`,
               'Accept': 'application/vnd.github+json'
-            },
-            cache: 'no-store'
+            }
           });
 
           if (!getResponse.ok) {
@@ -1230,15 +1233,17 @@
                 }
               }
             } catch (e) {
-              console.warn("El archivo en Gist no tenía JSON válido, se inicializará.");
+              console.warn("JSON inválido en Gist, se reinicializará.");
             }
           }
         }
 
-        // Unificar lista de IDs eliminados (locales + nube)
+        // PASO 2: Combinar lista de borrados (local + nube) y conservarla
         const allDeletedSet = new Set([...deletedIds.map(String), ...cloudDeletedIds]);
+        deletedIds = Array.from(allDeletedSet);
+        saveDeletedIds();
 
-        // PASO 2: Fusión (Merge) por ID excluyendo todos los eliminados
+        // PASO 3: Fusión por ID ignorando cualquier ID que esté en allDeletedSet
         const mergedMap = new Map();
 
         cloudReports.forEach(item => {
@@ -1267,12 +1272,14 @@
           return (b.createdAt || '').localeCompare(a.createdAt || '');
         });
 
-        // PASO 3: Subir la lista unificada a GitHub Gist (PATCH o POST)
-        // Guardamos el array directo para mantener compatibilidad 100% con versiones anteriores
+        // PASO 4: Subir tanto los reportes activos como la lista de IDs borrados
+        const payloadContent = JSON.stringify({
+          reports: unifiedReports,
+          deletedIds: deletedIds
+        }, null, 2);
+
         const payloadFiles = {
-          "reportes_campo.json": {
-            content: JSON.stringify(unifiedReports, null, 2)
-          }
+          "reportes_campo.json": { content: payloadContent }
         };
 
         let saveResponse;
@@ -1305,26 +1312,24 @@
           });
         }
 
-        if (!saveResponse.ok) throw new Error(`Error al guardar en Gist (${saveResponse.status})`);
+        if (!saveResponse.ok) {
+          throw new Error(`No se pudo guardar en GitHub (${saveResponse.status}). Revisá permisos del Token.`);
+        }
 
         const savedData = await saveResponse.json();
-        
         if (!config.gistId && savedData.id) {
           config.gistId = savedData.id;
           localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
           document.getElementById('config-gist-id').value = savedData.id;
         }
 
-        // PASO 4: Limpiar borrados ya confirmados en la nube y actualizar pantalla
-        deletedIds = [];
-        saveDeletedIds();
         reports = unifiedReports;
         saveLocalReports();
         renderReportsList();
 
         if (!silent) showToast(`Sincronizado (${reports.length} reportes)`, "success");
       } catch (err) {
-        if (!silent) showToast("Error en sincronización: " + err.message, "error");
+        showToast("Error al sincronizar: " + err.message, "error");
       } finally {
         isSyncing = false;
         syncIcon.classList.remove('fa-spin');
@@ -1385,7 +1390,7 @@
     }
 
     function updateBadges() {
-      const pendingCount = reports.filter(r => r.pendingSync).length + deletedIds.length;
+      const pendingCount = reports.filter(r => r.pendingSync).length;
       const pendingBadge = document.getElementById('badge-pending-count');
       const totalBadge = document.getElementById('badge-total-count');
 
