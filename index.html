@@ -269,6 +269,26 @@
         </div>
       </div>
 
+      <!-- BARRA DE SELECCIÓN MÚLTIPLE Y REPORTES SELECCIONADOS -->
+      <div class="bg-white p-3.5 rounded-xl shadow-sm border border-slate-200 space-y-2 text-xs">
+        <div class="flex items-center justify-between flex-wrap gap-2">
+          <label class="flex items-center space-x-2 cursor-pointer font-bold text-slate-700">
+            <input type="checkbox" id="select-all-checkbox" onchange="toggleSelectAllReports(this)" class="w-4 h-4 rounded accent-brand-600">
+            <span>Seleccionar Todos (<span id="selected-count-label">0</span>)</span>
+          </label>
+          <div class="flex flex-wrap gap-1.5">
+            <button onclick="exportSelectedToExcel()" class="bg-green-700 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-green-800 flex items-center space-x-1 transition shadow-sm">
+              <i class="fa-solid fa-file-excel"></i>
+              <span>Excel Seleccionados</span>
+            </button>
+            <button onclick="previewSelectedPdf()" class="bg-red-600 text-white font-bold px-3 py-1.5 rounded-lg hover:bg-red-700 flex items-center space-x-1 transition shadow-sm">
+              <i class="fa-solid fa-file-pdf"></i>
+              <span>PDF Seleccionados</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div id="reports-container" class="space-y-3">
         <!-- Renderizado vía JS -->
       </div>
@@ -278,12 +298,12 @@
 
   <!-- MODAL DE VISTA PREVIA IMPRESIÓN / DESCARGA PDF Y EXCEL -->
   <div id="modal-print-preview" class="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-50 hidden flex flex-col items-center justify-center p-3">
-    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+    <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
       
       <div class="bg-slate-800 text-white p-4 flex justify-between items-center no-print">
         <h3 class="font-bold text-base flex items-center space-x-2">
           <i class="fa-solid fa-file-lines text-emerald-400"></i>
-          <span>Vista Previa de Reporte</span>
+          <span id="modal-title-text">Vista Previa de Reporte</span>
         </h3>
         <button onclick="togglePrintModal(false)" class="text-slate-400 hover:text-white">
           <i class="fa-solid fa-xmark text-xl"></i>
@@ -300,7 +320,7 @@
         <button onclick="togglePrintModal(false)" class="px-3 py-2 rounded-xl border border-slate-300 font-bold text-slate-600 hover:bg-slate-200 text-xs">
           Cerrar
         </button>
-        <button onclick="exportSingleToExcel(currentReportForPdf?.id)" class="px-3.5 py-2 rounded-xl bg-green-700 hover:bg-green-800 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
+        <button id="modal-btn-excel" onclick="exportCurrentPdfModalToExcel()" class="px-3.5 py-2 rounded-xl bg-green-700 hover:bg-green-800 text-white font-bold shadow-md flex items-center space-x-1.5 text-xs">
           <i class="fa-solid fa-file-excel"></i>
           <span>Hoja Excel</span>
         </button>
@@ -434,10 +454,32 @@
     const CONFIG_KEY = 'agri_gist_config';
     const LAST_BACKUP_KEY = 'agri_last_backup_date';
 
+    // Safe Storage Wrapper to prevent localStorage SecurityError in sandboxed iframe previews
+    const safeStorage = {
+      getItem(key) {
+        try {
+          return localStorage.getItem(key);
+        } catch (e) {
+          return window._memoryStorage?.[key] || null;
+        }
+      },
+      setItem(key, value) {
+        try {
+          localStorage.setItem(key, value);
+        } catch (e) {
+          if (!window._memoryStorage) window._memoryStorage = {};
+          window._memoryStorage[key] = value;
+        }
+      }
+    };
+
     let reports = [];
     let config = { token: '', gistId: '' };
     let currentReportForPdf = null;
+    let currentPdfMode = 'single'; // 'single' o 'selected'
+    let selectedReportIds = new Set();
     let isSyncing = false;
+    let editingReportId = null;
 
     window.addEventListener('DOMContentLoaded', () => {
       document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
@@ -459,7 +501,7 @@
     });
 
     function loadLocalReports() {
-      const stored = localStorage.getItem(STORAGE_KEY);
+      const stored = safeStorage.getItem(STORAGE_KEY);
       if (stored) {
         try {
           reports = JSON.parse(stored);
@@ -490,12 +532,12 @@
     }
 
     function saveLocalReports() {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
+      safeStorage.setItem(STORAGE_KEY, JSON.stringify(reports));
       updateBadges();
     }
 
     function loadConfig() {
-      const stored = localStorage.getItem(CONFIG_KEY);
+      const stored = safeStorage.getItem(CONFIG_KEY);
       if (stored) {
         config = JSON.parse(stored);
         document.getElementById('config-token').value = config.token || '';
@@ -506,7 +548,7 @@
     function saveConfig() {
       config.token = document.getElementById('config-token').value.trim();
       config.gistId = document.getElementById('config-gist-id').value.trim();
-      localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+      safeStorage.setItem(CONFIG_KEY, JSON.stringify(config));
       toggleConfigModal(false);
       showToast("Configuración guardada", "success");
       if (navigator.onLine && config.token && config.gistId) {
@@ -531,36 +573,121 @@
     function handleFormSubmit(event) {
       event.preventDefault();
 
-      const newReport = {
-        id: 'rep_' + Date.now(),
-        fecha: document.getElementById('field-fecha').value,
-        campo: document.getElementById('field-campo').value.trim(),
-        lote: document.getElementById('field-lote').value.trim(),
-        sup: document.getElementById('field-sup').value.trim(),
-        cultivo: document.getElementById('field-cultivo').value.trim(),
-        estado: document.getElementById('field-estado').value.trim(),
-        plagas: document.getElementById('field-plagas').value.trim(),
-        malezas: document.getElementById('field-malezas').value.trim(),
-        aplicar: document.getElementById('field-aplicar').checked,
-        observaciones: document.getElementById('field-observaciones').value.trim(),
-        deleted: false,
-        pendingSync: true,
-        createdAt: new Date().toISOString()
-      };
+      const fecha = document.getElementById('field-fecha').value;
+      const campo = document.getElementById('field-campo').value.trim();
+      const lote = document.getElementById('field-lote').value.trim();
+      const sup = document.getElementById('field-sup').value.trim();
+      const cultivo = document.getElementById('field-cultivo').value.trim();
+      const estado = document.getElementById('field-estado').value.trim();
+      const plagas = document.getElementById('field-plagas').value.trim();
+      const malezas = document.getElementById('field-malezas').value.trim();
+      const aplicar = document.getElementById('field-aplicar').checked;
+      const observaciones = document.getElementById('field-observaciones').value.trim();
 
-      reports.unshift(newReport);
+      if (editingReportId) {
+        reports = reports.map(r => {
+          if (String(r.id) === String(editingReportId)) {
+            return {
+              ...r,
+              fecha,
+              campo,
+              lote,
+              sup,
+              cultivo,
+              estado,
+              plagas,
+              malezas,
+              aplicar,
+              observaciones,
+              pendingSync: true
+            };
+          }
+          return r;
+        });
+        showToast("Reporte actualizado correctamente", "success");
+        cancelEdit();
+      } else {
+        const newReport = {
+          id: 'rep_' + Date.now(),
+          fecha,
+          campo,
+          lote,
+          sup,
+          cultivo,
+          estado,
+          plagas,
+          malezas,
+          aplicar,
+          observaciones,
+          deleted: false,
+          pendingSync: true,
+          createdAt: new Date().toISOString()
+        };
+        reports.unshift(newReport);
+        showToast("Reporte guardado", "success");
+        document.getElementById('report-form').reset();
+        document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
+      }
+
       saveLocalReports();
       renderReportsList();
-
-      document.getElementById('report-form').reset();
-      document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
-
-      showToast("Reporte guardado", "success");
       switchTab('history');
 
       if (navigator.onLine && config.token && config.gistId) {
         syncWithGist(true);
       }
+    }
+
+    function editReport(id) {
+      const r = reports.find(item => String(item.id) === String(id));
+      if (!r) return;
+
+      editingReportId = r.id;
+      document.getElementById('field-fecha').value = r.fecha || '';
+      document.getElementById('field-campo').value = r.campo || '';
+      document.getElementById('field-lote').value = r.lote || '';
+      document.getElementById('field-sup').value = r.sup || '';
+      document.getElementById('field-cultivo').value = r.cultivo || '';
+      document.getElementById('field-estado').value = r.estado || '';
+      document.getElementById('field-plagas').value = r.plagas || '';
+      document.getElementById('field-malezas').value = r.malezas || '';
+      document.getElementById('field-aplicar').checked = !!r.aplicar;
+      document.getElementById('field-observaciones').value = r.observaciones || '';
+
+      const submitBtn = document.querySelector('#report-form button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.innerHTML = '<i class="fa-solid fa-pen-to-square text-lg"></i><span>ACTUALIZAR REPORTE</span>';
+        submitBtn.className = "w-full bg-amber-600 hover:bg-amber-700 active:scale-[0.99] text-white font-bold py-4 rounded-xl shadow-lg shadow-amber-600/30 flex items-center justify-center space-x-2 text-base transition";
+      }
+
+      let cancelBtn = document.getElementById('btn-cancel-edit');
+      if (!cancelBtn) {
+        cancelBtn = document.createElement('button');
+        cancelBtn.id = 'btn-cancel-edit';
+        cancelBtn.type = 'button';
+        cancelBtn.onclick = cancelEdit;
+        cancelBtn.className = "w-full mt-2 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold py-3 rounded-xl flex items-center justify-center space-x-2 text-sm transition";
+        cancelBtn.innerHTML = '<i class="fa-solid fa-xmark"></i><span>CANCELAR EDICIÓN</span>';
+        submitBtn.parentNode.appendChild(cancelBtn);
+      }
+
+      switchTab('form');
+      showToast("Editando reporte seleccionado", "warning");
+    }
+
+    function cancelEdit() {
+      editingReportId = null;
+      document.getElementById('report-form').reset();
+      document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
+
+      const submitBtn = document.querySelector('#report-form button[type="submit"]');
+      if (submitBtn) {
+        submitBtn.innerHTML = '<i class="fa-solid fa-floppy-disk text-lg"></i><span>GUARDAR REPORTE LOCAL</span>';
+        submitBtn.className = "w-full bg-brand-600 hover:bg-brand-700 active:scale-[0.99] text-white font-bold py-4 rounded-xl shadow-lg shadow-brand-600/30 flex items-center justify-center space-x-2 text-base transition";
+      }
+
+      const cancelBtn = document.getElementById('btn-cancel-edit');
+      if (cancelBtn) cancelBtn.remove();
     }
 
     function renderReportsList() {
@@ -574,29 +701,40 @@
             <p class="font-medium">No hay reportes cargados.</p>
           </div>
         `;
+        updateSelectionUI();
         return;
       }
 
-      container.innerHTML = activeReports.map(r => `
+      container.innerHTML = activeReports.map(r => {
+        const rId = String(r.id);
+        const isChecked = selectedReportIds.has(rId) ? 'checked' : '';
+        return `
         <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3 relative overflow-hidden">
           
           <div class="absolute top-0 left-0 bottom-0 w-1.5 ${r.pendingSync ? 'bg-amber-500' : 'bg-emerald-500'}"></div>
 
           <div class="flex justify-between items-start pl-2 gap-2">
-            <div>
-              <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">${formatDate(r.fecha)}</span>
-              <h3 class="font-bold text-slate-800 text-lg leading-tight">${escapeHtml(r.campo)} - Lote ${escapeHtml(r.lote)}</h3>
+            <div class="flex items-start space-x-2.5">
+              <input type="checkbox" value="${escapeHtml(rId)}" ${isChecked} onchange="handleReportSelectionChange()" class="report-select-checkbox mt-1 w-4 h-4 rounded accent-brand-600 shrink-0 cursor-pointer">
+              <div>
+                <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">${formatDate(r.fecha)}</span>
+                <h3 class="font-bold text-slate-800 text-lg leading-tight">${escapeHtml(r.campo)} - Lote ${escapeHtml(r.lote)}</h3>
+              </div>
             </div>
             <div class="flex items-center space-x-1 shrink-0">
-              <button type="button" onclick="exportSingleToExcel('${escapeHtml(String(r.id))}')" title="Descargar en formato Excel (.xlsx)" class="text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 p-2 rounded-lg border border-green-200 transition flex items-center space-x-1 text-xs font-bold">
+              <button type="button" onclick="editReport('${escapeHtml(rId)}')" title="Editar reporte" class="text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 p-2 rounded-lg border border-blue-200 transition flex items-center space-x-1 text-xs font-bold">
+                <i class="fa-solid fa-pen text-sm"></i>
+                <span>EDIT</span>
+              </button>
+              <button type="button" onclick="exportSingleToExcel('${escapeHtml(rId)}')" title="Descargar en formato Excel (.xlsx)" class="text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 p-2 rounded-lg border border-green-200 transition flex items-center space-x-1 text-xs font-bold">
                 <i class="fa-solid fa-file-excel text-sm"></i>
                 <span>XLS</span>
               </button>
-              <button type="button" onclick="printSingleReport('${escapeHtml(String(r.id))}')" title="Vista Previa / PDF / Imprimir" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
+              <button type="button" onclick="printSingleReport('${escapeHtml(rId)}')" title="Vista Previa / PDF / Imprimir" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
                 <i class="fa-solid fa-file-pdf text-sm"></i>
                 <span>PDF</span>
               </button>
-              <button type="button" onclick="deleteReport('${escapeHtml(String(r.id))}')" title="Eliminar" class="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition">
+              <button type="button" onclick="deleteReport('${escapeHtml(rId)}')" title="Eliminar" class="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition">
                 <i class="fa-solid fa-trash-can"></i>
               </button>
             </div>
@@ -624,14 +762,210 @@
           ` : ''}
 
         </div>
-      `).join('');
+      `;
+      }).join('');
+      updateSelectionUI();
+    }
+
+    // ==========================================
+    // SELECCIÓN MÚLTIPLE DE ÓRDENES / REPORTES
+    // ==========================================
+    function toggleSelectAllReports(masterCheckbox) {
+      const activeReports = reports.filter(r => !r.deleted);
+      if (masterCheckbox.checked) {
+        activeReports.forEach(r => selectedReportIds.add(String(r.id)));
+      } else {
+        selectedReportIds.clear();
+      }
+      renderReportsList();
+    }
+
+    function handleReportSelectionChange() {
+      selectedReportIds.clear();
+      const checkboxes = document.querySelectorAll('.report-select-checkbox');
+      checkboxes.forEach(cb => {
+        if (cb.checked) {
+          selectedReportIds.add(cb.value);
+        }
+      });
+      updateSelectionUI();
+    }
+
+    function updateSelectionUI() {
+      const activeReports = reports.filter(r => !r.deleted);
+      const countLabel = document.getElementById('selected-count-label');
+      const selectAllCb = document.getElementById('select-all-checkbox');
+      
+      if (countLabel) countLabel.innerText = selectedReportIds.size;
+      
+      if (selectAllCb && activeReports.length > 0) {
+        selectAllCb.checked = (selectedReportIds.size === activeReports.length);
+        selectAllCb.indeterminate = (selectedReportIds.size > 0 && selectedReportIds.size < activeReports.length);
+      }
+    }
+
+    function getSelectedReportsList() {
+      return reports.filter(r => r && !r.deleted && selectedReportIds.has(String(r.id)));
+    }
+
+    function previewSelectedPdf() {
+      const selReports = getSelectedReportsList();
+      if (selReports.length === 0) {
+        return showToast("Seleccioná al menos un reporte para generar el PDF consolidado", "warning");
+      }
+
+      currentPdfMode = 'selected';
+      currentReportForPdf = selReports;
+      
+      document.getElementById('modal-title-text').innerText = `Reporte Consolidado (${selReports.length} lotes)`;
+
+      const area = document.getElementById('printable-area');
+      
+      // Construir vista HTML tipo Planilla Maestra para la selección
+      let totalSup = 0;
+      let totalAplicarSup = 0;
+      let countAplicar = 0;
+
+      const rowsHtml = selReports.map((r, idx) => {
+        const sup = parseFloat(String(r.sup || '0').replace(',', '.')) || 0;
+        totalSup += sup;
+        if (r.aplicar) {
+          totalAplicarSup += sup;
+          countAplicar++;
+        }
+        return `
+          <tr style="background-color: ${idx % 2 === 1 ? '#f8fafc' : '#ffffff'}; font-size: 10px;">
+            <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: center;">${idx + 1}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: center;">${formatDate(r.fecha)}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1; font-weight: bold;">${escapeHtml(r.campo)}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: center; font-weight: bold;">${escapeHtml(r.lote)}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1; text-align: right;">${r.sup ? r.sup + ' ha' : '-'}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1;">${escapeHtml(r.cultivo)}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1;">${escapeHtml(r.estado || '-')}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1;">${escapeHtml(r.plagas || '-')}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1;">${escapeHtml(r.malezas || '-')}</td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1; color: ${r.aplicar ? '#dc2626' : '#166534'}; font-weight: bold; text-align: center;">
+              ${r.aplicar ? 'SÍ' : 'NO'}
+            </td>
+            <td style="padding: 5px; border: 1px solid #cbd5e1; font-style: italic;">${escapeHtml(r.observaciones || '-')}</td>
+          </tr>
+        `;
+      }).join('');
+
+      area.innerHTML = `
+        <div style="font-family: Arial, sans-serif; color: #1e293b;">
+          <div style="border-bottom: 3px solid #166534; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+            <div>
+              <h1 style="margin: 0; color: #166534; font-size: 18px; font-weight: bold;">REPORTE CONSOLIDADO DE MONITOREO</h1>
+              <p style="margin: 3px 0 0 0; color: #64748b; font-size: 11px;">Selección de Lotes y Órdenes de Campo</p>
+            </div>
+            <div style="text-align: right; font-size: 11px; color: #334155;">
+              <strong>Fecha Emisión:</strong> ${new Date().toLocaleDateString('es-AR')}
+            </div>
+          </div>
+
+          <!-- RESUMEN / KPI CARDS -->
+          <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+            <div style="flex: 1; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px; text-align: center;">
+              <div style="font-size: 9px; font-weight: bold; color: #475569;">LOTES SELECCIONADOS</div>
+              <div style="font-size: 14px; font-weight: bold; color: #0f172a;">${selReports.length}</div>
+            </div>
+            <div style="flex: 1; background: #f1f5f9; border: 1px solid #cbd5e1; padding: 8px; border-radius: 6px; text-align: center;">
+              <div style="font-size: 9px; font-weight: bold; color: #475569;">SUPERFICIE TOTAL</div>
+              <div style="font-size: 14px; font-weight: bold; color: #166534;">${totalSup.toFixed(1)} ha</div>
+            </div>
+            <div style="flex: 1; background: #fef2f2; border: 1px solid #fecaca; padding: 8px; border-radius: 6px; text-align: center;">
+              <div style="font-size: 9px; font-weight: bold; color: #991b1b;">SUP. A APLICAR</div>
+              <div style="font-size: 14px; font-weight: bold; color: #b91c1c;">${totalAplicarSup.toFixed(1)} ha (${countAplicar} lotes)</div>
+            </div>
+          </div>
+
+          <!-- TABLA CONSOLIDADA -->
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 15px;">
+            <thead>
+              <tr style="background-color: #166534; color: white; font-size: 10px;">
+                <th style="padding: 6px; border: 1px solid #14532d;">N°</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Fecha</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Campo</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Lote</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Sup (ha)</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Cultivo</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Estado</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Plagas</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Malezas</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Aplicar</th>
+                <th style="padding: 6px; border: 1px solid #14532d;">Observaciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+            <tfoot>
+              <tr style="background-color: #dcfce7; font-weight: bold; font-size: 10px; color: #14532d;">
+                <td colspan="4" style="padding: 6px; border: 1px solid #166534; text-align: right;">TOTAL SUPERFICIE:</td>
+                <td style="padding: 6px; border: 1px solid #166534; text-align: right;">${totalSup.toFixed(1)} ha</td>
+                <td colspan="6" style="padding: 6px; border: 1px solid #166534;"></td>
+              </tr>
+            </tfoot>
+          </table>
+
+          <div style="margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 8px; display: flex; justify-content: space-between; font-size: 10px; color: #94a3b8;">
+            <span>Monitoreo Agrícola - Reportes Seleccionados</span>
+            <span>Página 1 de 1</span>
+          </div>
+        </div>
+      `;
+
+      togglePrintModal(true);
+    }
+
+    function exportSelectedToExcel() {
+      const selReports = getSelectedReportsList();
+      if (selReports.length === 0) {
+        return showToast("Seleccioná al menos un reporte para exportar a Excel", "warning");
+      }
+
+      if (typeof XLSX === 'undefined') {
+        return showToast("Librería Excel no disponible (revisá conexión)", "error");
+      }
+
+      const wb = XLSX.utils.book_new(); wb.Workbook = { CalcPr: { fullCalcOnLoad: true } };
+      const fechaHoy = new Date().toLocaleDateString('es-AR');
+      const ws = buildProfessionalTabularSheet(
+        selReports,
+        "REPORTE CONSOLIDADO DE LOTES SELECCIONADOS",
+        `Planilla de Monitoreo Agrícola (Selección personalizada)  |  Emitido el ${fechaHoy}`
+      );
+
+      XLSX.utils.book_append_sheet(wb, ws, "Lotes Seleccionados");
+
+      const filename = `Planilla_Seleccion_${new Date().toISOString().split('T')[0]}.xlsx`;
+      XLSX.writeFile(wb, filename);
+      showToast(`Excel descargado con ${selReports.length} reportes`, "success");
+    }
+
+    function exportCurrentPdfModalToExcel() {
+      if (currentPdfMode === 'selected') {
+        exportSelectedToExcel();
+      } else if (currentPdfMode === 'single' && currentReportForPdf) {
+        if (!Array.isArray(currentReportForPdf)) {
+          exportSingleToExcel(currentReportForPdf.id);
+        } else {
+          exportSelectedToExcel();
+        }
+      } else {
+        exportAllToExcel();
+      }
     }
 
     function printSingleReport(id) {
       const r = reports.find(item => String(item.id) === String(id));
       if (!r) return;
 
+      currentPdfMode = 'single';
       currentReportForPdf = r;
+      document.getElementById('modal-title-text').innerText = `Reporte Individual - ${r.campo} (Lote ${r.lote})`;
+      
       const area = document.getElementById('printable-area');
       area.innerHTML = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1e293b;">
@@ -706,16 +1040,21 @@
     }
 
     function downloadPdfDirect() {
-      if (!currentReportForPdf) return;
       const element = document.getElementById('printable-area');
-      const filename = `Reporte_${currentReportForPdf.campo.replace(/\s+/g, '_')}_Lote${currentReportForPdf.lote}_${currentReportForPdf.fecha}.pdf`;
+      let filename = 'Reporte_Monitoreo_Agricola.pdf';
+      
+      if (currentPdfMode === 'single' && currentReportForPdf && !Array.isArray(currentReportForPdf)) {
+        filename = `Reporte_${currentReportForPdf.campo.replace(/\s+/g, '_')}_Lote${currentReportForPdf.lote}_${currentReportForPdf.fecha}.pdf`;
+      } else if (currentPdfMode === 'selected') {
+        filename = `Reporte_Consolidado_Seleccion_${new Date().toISOString().split('T')[0]}.pdf`;
+      }
       
       const opt = {
         margin:       10,
         filename:     filename,
         image:        { type: 'jpeg', quality: 0.98 },
         html2canvas:  { scale: 2 },
-        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'landscape' }
       };
 
       html2pdf().set(opt).from(element).save();
@@ -857,11 +1196,33 @@
       const startDataRow = 8;
       const endDataRow = startDataRow + activeReports.length - 1;
 
+      // Pre-calcular valores exactos en JavaScript para que los visores sin recalculo (mobile, Google Sheets, Vista Previa) muestren los totales al instante junto con la formula
+      let calcTotalLotes = activeReports.length;
+      let calcTotalSup = 0;
+      let calcAplicarSup = 0;
+      let calcAplicarLotes = 0;
+
+      const parsedSupValues = activeReports.map(r => {
+        if (r.sup === "" || r.sup === null || r.sup === undefined) return null;
+        const cleanStr = String(r.sup).trim().replace(',', '.');
+        const num = parseFloat(cleanStr);
+        return !isNaN(num) ? num : null;
+      });
+
+      activeReports.forEach((r, idx) => {
+        const val = parsedSupValues[idx] || 0;
+        calcTotalSup += val;
+        if (r.aplicar) {
+          calcAplicarSup += val;
+          calcAplicarLotes++;
+        }
+      });
+
       const kpiCards = [
-        { colStart: 0, colEnd: 1, label: "LOTES RELEVADOS", formula: `COUNTA(B${startDataRow}:B${endDataRow})`, isAlert: false, fmt: "#,##0" },
-        { colStart: 2, colEnd: 3, label: "SUPERFICIE TOTAL (HA)", formula: `SUM(E${startDataRow}:E${endDataRow})`, isAlert: false, fmt: "#,##0.0" },
-        { colStart: 4, colEnd: 5, label: "SUPERFICIE A APLICAR (HA)", formula: `SUMIF(J${startDataRow}:J${endDataRow},"SÍ",E${startDataRow}:E${endDataRow})`, isAlert: true, fmt: "#,##0.0" },
-        { colStart: 6, colEnd: 7, label: "LOTES CON APLICACIÓN", formula: `COUNTIF(J${startDataRow}:J${endDataRow},"SÍ")`, isAlert: true, fmt: "#,##0" }
+        { colStart: 0, colEnd: 1, label: "LOTES RELEVADOS", formula: `COUNTA(B${startDataRow}:B${endDataRow})`, cachedVal: calcTotalLotes, isAlert: false, fmt: "#,##0" },
+        { colStart: 2, colEnd: 3, label: "SUPERFICIE TOTAL (HA)", formula: `SUM(E${startDataRow}:E${endDataRow})`, cachedVal: calcTotalSup, isAlert: false, fmt: "#,##0.0" },
+        { colStart: 4, colEnd: 5, label: "SUPERFICIE A APLICAR (HA)", formula: `SUMIF(J${startDataRow}:J${endDataRow},"SÍ",E${startDataRow}:E${endDataRow})`, cachedVal: calcAplicarSup, isAlert: true, fmt: "#,##0.0" },
+        { colStart: 6, colEnd: 7, label: "LOTES CON APLICACIÓN", formula: `COUNTIF(J${startDataRow}:J${endDataRow},"SÍ")`, cachedVal: calcAplicarLotes, isAlert: true, fmt: "#,##0" }
       ];
 
       const kpiMerges = [];
@@ -872,7 +1233,7 @@
         ws[`${endCol}4`] = { v: "", t: "s", s: EXCEL_STYLES.kpiLabel };
 
         const valStyle = { ...(kpi.isAlert ? EXCEL_STYLES.kpiValueAlert : EXCEL_STYLES.kpiValue), numFmt: kpi.fmt };
-        ws[`${startCol}5`] = { f: kpi.formula, t: "n", s: valStyle };
+        ws[`${startCol}5`] = { f: kpi.formula, v: kpi.cachedVal, t: "n", s: valStyle };
         ws[`${endCol}5`] = { v: "", t: "s", s: valStyle };
 
         kpiMerges.push({ s: { r: 3, c: kpi.colStart }, e: { r: 3, c: kpi.colEnd } });
@@ -911,7 +1272,7 @@
       activeReports.forEach((r, idx) => {
         const excelRowIdx = 7 + idx;
         const isEven = idx % 2 === 1;
-        const supVal = r.sup !== "" && r.sup !== null && !isNaN(parseFloat(r.sup)) ? parseFloat(r.sup) : null;
+        const supVal = parsedSupValues[idx];
 
         const rowCells = [
           { v: idx + 1, t: "n", s: getDataCellStyle(isEven, "center", false, null, "0") },
@@ -945,7 +1306,7 @@
         if (c === 3) {
           ws[ref] = { v: "TOTAL HA:", t: "s", s: EXCEL_STYLES.totalRowLabel };
         } else if (c === 4) {
-          ws[ref] = { f: `SUM(E${startDataRow}:E${endDataRow})`, t: "n", s: EXCEL_STYLES.totalRowValue };
+          ws[ref] = { f: `SUM(E${startDataRow}:E${endDataRow})`, v: calcTotalSup, t: "n", s: EXCEL_STYLES.totalRowValue };
         } else {
           ws[ref] = { v: "", t: "s", s: EXCEL_STYLES.totalRowEmpty };
         }
@@ -986,7 +1347,7 @@
         return showToast("Librería Excel no disponible (revisá conexión)", "error");
       }
 
-      const wb = XLSX.utils.book_new();
+      const wb = XLSX.utils.book_new(); wb.Workbook = { CalcPr: { fullCalcOnLoad: true } };
       const fechaHoy = new Date().toLocaleDateString('es-AR');
       const ws = buildProfessionalTabularSheet(
         reports,
@@ -1010,7 +1371,7 @@
         return showToast("Librería Excel no disponible (revisá conexión)", "error");
       }
 
-      const wb = XLSX.utils.book_new();
+      const wb = XLSX.utils.book_new(); wb.Workbook = { CalcPr: { fullCalcOnLoad: true } };
       const ws = buildProfessionalTabularSheet(
         [r],
         `REPORTE DE MONITOREO AGRÍCOLA - ${r.campo.toUpperCase()} (LOTE ${r.lote})`,
@@ -1048,7 +1409,7 @@
       downloadFile(JSON.stringify(backupPayload, null, 2), fileName, 'application/json');
 
       const formattedNow = `${now.toLocaleDateString('es-AR')} ${now.toTimeString().slice(0, 5)}`;
-      localStorage.setItem(LAST_BACKUP_KEY, formattedNow);
+      safeStorage.setItem(LAST_BACKUP_KEY, formattedNow);
       updateLastBackupLabel();
       showToast("Copia de seguridad descargada", "success");
     }
@@ -1120,7 +1481,7 @@
     }
 
     function updateLastBackupLabel() {
-      const last = localStorage.getItem(LAST_BACKUP_KEY);
+      const last = safeStorage.getItem(LAST_BACKUP_KEY);
       const label = document.getElementById('last-backup-label');
       if (label && last) {
         label.innerText = last;
@@ -1147,7 +1508,6 @@
       const targetId = String(id);
       if (!confirm("¿Estás seguro de eliminar este reporte?")) return;
 
-      // Borrado lógico: marcar como deleted = true
       reports = reports.map(r => {
         if (String(r.id) === targetId) {
           return { ...r, deleted: true, pendingSync: true };
@@ -1155,11 +1515,11 @@
         return r;
       });
 
+      selectedReportIds.delete(targetId);
       saveLocalReports();
       renderReportsList();
       showToast("Reporte eliminado", "info");
 
-      // Sincronizar con GitHub Gist de inmediato para que viaje el estado deleted: true
       if (navigator.onLine && config.token && config.gistId) {
         await syncWithGist(true);
       }
@@ -1188,7 +1548,6 @@
       try {
         let cloudReports = [];
 
-        // PASO 1: Descargar el array actual del Gist
         if (config.gistId) {
           const getResponse = await fetch(`https://api.github.com/gists/${config.gistId}?t=${Date.now()}`, {
             method: 'GET',
@@ -1215,7 +1574,6 @@
           }
         }
 
-        // PASO 2: Fusión inteligente preservando el estado `deleted: true`
         const mergedMap = new Map();
 
         cloudReports.forEach(item => {
@@ -1245,7 +1603,6 @@
           return (b.createdAt || '').localeCompare(a.createdAt || '');
         });
 
-        // PASO 3: Subir la lista unificada al Gist
         const payloadFiles = {
           "reportes_campo.json": {
             content: JSON.stringify(unifiedReports, null, 2)
@@ -1289,7 +1646,7 @@
         const savedData = await saveResponse.json();
         if (!config.gistId && savedData.id) {
           config.gistId = savedData.id;
-          localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
+          safeStorage.setItem(CONFIG_KEY, JSON.stringify(config));
           document.getElementById('config-gist-id').value = savedData.id;
         }
 
@@ -1314,15 +1671,15 @@
       const headers = ["Fecha", "Campo", "Lote", "Superficie", "Cultivo", "Estado", "Plagas", "Malezas", "Aplicar", "Observaciones", "Sincronizado"];
       const rows = activeReports.map(r => [
         r.fecha,
-        `"${(r.campo || '').replace(/"/g, '""')}"`,
-        `"${(r.lote || '').replace(/"/g, '""')}"`,
+        `\"${(r.campo || '').replace(/"/g, '""')}\"`,
+        `\"${(r.lote || '').replace(/"/g, '""')}\"`,
         r.sup || '',
-        `"${(r.cultivo || '').replace(/"/g, '""')}"`,
-        `"${(r.estado || '').replace(/"/g, '""')}"`,
-        `"${(r.plagas || '').replace(/"/g, '""')}"`,
-        `"${(r.malezas || '').replace(/"/g, '""')}"`,
+        `\"${(r.cultivo || '').replace(/"/g, '""')}\"`,
+        `\"${(r.estado || '').replace(/"/g, '""')}\"`,
+        `\"${(r.plagas || '').replace(/"/g, '""')}\"`,
+        `\"${(r.malezas || '').replace(/"/g, '""')}\"`,
         r.aplicar ? 'SI' : 'NO',
-        `"${(r.observaciones || '').replace(/"/g, '""')}"`,
+        `\"${(r.observaciones || '').replace(/"/g, '""')}\"`,
         r.pendingSync ? 'NO' : 'SI'
       ]);
 
