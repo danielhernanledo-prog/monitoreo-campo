@@ -431,12 +431,10 @@
 
   <script>
     const STORAGE_KEY = 'agri_reports_data';
-    const DELETED_KEY = 'agri_deleted_reports';
     const CONFIG_KEY = 'agri_gist_config';
     const LAST_BACKUP_KEY = 'agri_last_backup_date';
 
     let reports = [];
-    let deletedIds = [];
     let config = { token: '', gistId: '' };
     let currentReportForPdf = null;
     let isSyncing = false;
@@ -444,7 +442,6 @@
     window.addEventListener('DOMContentLoaded', () => {
       document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
       loadConfig();
-      loadDeletedIds();
       loadLocalReports();
       updateLastBackupLabel();
       updateOnlineStatus();
@@ -461,27 +458,11 @@
       }
     });
 
-    function loadDeletedIds() {
-      const stored = localStorage.getItem(DELETED_KEY);
-      if (stored) {
-        try {
-          deletedIds = JSON.parse(stored).map(String);
-        } catch (e) {
-          deletedIds = [];
-        }
-      }
-    }
-
-    function saveDeletedIds() {
-      localStorage.setItem(DELETED_KEY, JSON.stringify(deletedIds));
-      updateBadges();
-    }
-
     function loadLocalReports() {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         try {
-          reports = JSON.parse(stored).filter(r => r && !deletedIds.includes(String(r.id)));
+          reports = JSON.parse(stored);
         } catch (e) {
           reports = [];
         }
@@ -498,6 +479,7 @@
           malezas: '',
           aplicar: false,
           observaciones: 'Todavía no se ve efecto del glifo. Muy pocos días de aplicado',
+          deleted: false,
           pendingSync: true,
           createdAt: new Date('2026-10-08T10:00:00').toISOString()
         }];
@@ -561,6 +543,7 @@
         malezas: document.getElementById('field-malezas').value.trim(),
         aplicar: document.getElementById('field-aplicar').checked,
         observaciones: document.getElementById('field-observaciones').value.trim(),
+        deleted: false,
         pendingSync: true,
         createdAt: new Date().toISOString()
       };
@@ -582,8 +565,9 @@
 
     function renderReportsList() {
       const container = document.getElementById('reports-container');
+      const activeReports = reports.filter(r => r && !r.deleted);
       
-      if (reports.length === 0) {
+      if (activeReports.length === 0) {
         container.innerHTML = `
           <div class="bg-white rounded-2xl p-8 text-center text-slate-400 border border-slate-200">
             <i class="fa-solid fa-clipboard text-4xl mb-2 text-slate-300"></i>
@@ -593,7 +577,7 @@
         return;
       }
 
-      container.innerHTML = reports.map(r => `
+      container.innerHTML = activeReports.map(r => `
         <div class="bg-white rounded-2xl p-4 shadow-sm border border-slate-200 space-y-3 relative overflow-hidden">
           
           <div class="absolute top-0 left-0 bottom-0 w-1.5 ${r.pendingSync ? 'bg-amber-500' : 'bg-emerald-500'}"></div>
@@ -869,8 +853,9 @@
         ws[`${colLetter}2`] = { v: "", t: "s", s: EXCEL_STYLES.bannerSubtitle };
       }
 
+      const activeReports = reportList.filter(r => !r.deleted);
       const startDataRow = 8;
-      const endDataRow = startDataRow + reportList.length - 1;
+      const endDataRow = startDataRow + activeReports.length - 1;
 
       const kpiCards = [
         { colStart: 0, colEnd: 1, label: "LOTES RELEVADOS", formula: `COUNTA(B${startDataRow}:B${endDataRow})`, isAlert: false, fmt: "#,##0" },
@@ -923,7 +908,7 @@
         { hpt: 28 }
       ];
 
-      reportList.forEach((r, idx) => {
+      activeReports.forEach((r, idx) => {
         const excelRowIdx = 7 + idx;
         const isEven = idx % 2 === 1;
         const supVal = r.sup !== "" && r.sup !== null && !isNaN(parseFloat(r.sup)) ? parseFloat(r.sup) : null;
@@ -954,7 +939,7 @@
         rowHeights.push({ hpt: dynamicHeight });
       });
 
-      const totalRowIdx = 7 + reportList.length;
+      const totalRowIdx = 7 + activeReports.length;
       for (let c = 0; c < totalCols; c++) {
         const ref = XLSX.utils.encode_cell({ r: totalRowIdx, c });
         if (c === 3) {
@@ -994,7 +979,8 @@
     }
 
     function exportAllToExcel() {
-      if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
+      const activeReports = reports.filter(r => !r.deleted);
+      if (activeReports.length === 0) return showToast("No hay reportes para exportar", "warning");
 
       if (typeof XLSX === 'undefined') {
         return showToast("Librería Excel no disponible (revisá conexión)", "error");
@@ -1045,11 +1031,12 @@
     // COPIA DE SEGURIDAD (BACKUP & RESTAURACIÓN)
     // ==========================================
     function downloadBackup() {
+      const activeReports = reports.filter(r => !r.deleted);
       const backupPayload = {
         app: "Monitoreo Agrícola - Reportes de Campo",
-        version: "2.2",
+        version: "2.3",
         exportedAt: new Date().toISOString(),
-        totalReports: reports.length,
+        totalReports: activeReports.length,
         reports: reports
       };
 
@@ -1083,12 +1070,10 @@
           const mode = document.querySelector('input[name="restore-mode"]:checked')?.value || 'merge';
 
           if (mode === 'replace') {
-            if (!confirm(`Se reemplazarán los ${reports.length} reportes actuales por los ${incomingReports.length} reportes del respaldo. ¿Continuar?`)) {
+            if (!confirm(`Se reemplazarán los reportes actuales por los ${incomingReports.length} reportes del respaldo. ¿Continuar?`)) {
               event.target.value = '';
               return;
             }
-            deletedIds = [];
-            saveDeletedIds();
             reports = incomingReports.map(r => ({ ...r, pendingSync: true }));
             showToast(`Restaurados ${reports.length} reportes`, "success");
           } else {
@@ -1099,10 +1084,10 @@
               if (item && item.campo && item.fecha) {
                 const itemId = item.id ? String(item.id) : ('rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
                 if (!existingIds.has(itemId)) {
-                  deletedIds = deletedIds.filter(d => d !== itemId);
                   const cleanItem = {
                     ...item,
                     id: itemId,
+                    deleted: !!item.deleted,
                     pendingSync: true
                   };
                   reports.push(cleanItem);
@@ -1112,7 +1097,6 @@
               }
             });
 
-            saveDeletedIds();
             reports.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
             showToast(`Copia restaurada: +${addedCount} reportes incorporados`, "success");
           }
@@ -1163,20 +1147,21 @@
       const targetId = String(id);
       if (!confirm("¿Estás seguro de eliminar este reporte?")) return;
 
-      // 1. Quitar de la lista visible y guardar en la lista permanente de borrados
-      reports = reports.filter(r => String(r.id) !== targetId);
-      if (!deletedIds.includes(targetId)) {
-        deletedIds.push(targetId);
-      }
+      // Borrado lógico: marcar como deleted = true
+      reports = reports.map(r => {
+        if (String(r.id) === targetId) {
+          return { ...r, deleted: true, pendingSync: true };
+        }
+        return r;
+      });
 
-      saveDeletedIds();
       saveLocalReports();
       renderReportsList();
       showToast("Reporte eliminado", "info");
 
-      // 2. Sincronizar con GitHub Gist
+      // Sincronizar con GitHub Gist de inmediato para que viaje el estado deleted: true
       if (navigator.onLine && config.token && config.gistId) {
-        await syncWithGist(false);
+        await syncWithGist(true);
       }
     }
 
@@ -1202,9 +1187,8 @@
 
       try {
         let cloudReports = [];
-        let cloudDeletedIds = [];
 
-        // PASO 1: Leer datos actuales del Gist evitando caché del navegador con timestamp
+        // PASO 1: Descargar el array actual del Gist
         if (config.gistId) {
           const getResponse = await fetch(`https://api.github.com/gists/${config.gistId}?t=${Date.now()}`, {
             method: 'GET',
@@ -1224,43 +1208,32 @@
           if (fileContent) {
             try {
               const parsed = JSON.parse(fileContent);
-              if (Array.isArray(parsed)) {
-                cloudReports = parsed;
-              } else if (parsed && Array.isArray(parsed.reports)) {
-                cloudReports = parsed.reports;
-                if (Array.isArray(parsed.deletedIds)) {
-                  cloudDeletedIds = parsed.deletedIds.map(String);
-                }
-              }
+              if (Array.isArray(parsed)) cloudReports = parsed;
             } catch (e) {
-              console.warn("JSON inválido en Gist, se reinicializará.");
+              console.warn("JSON inválido en Gist.");
             }
           }
         }
 
-        // PASO 2: Combinar lista de borrados (local + nube) y conservarla
-        const allDeletedSet = new Set([...deletedIds.map(String), ...cloudDeletedIds]);
-        deletedIds = Array.from(allDeletedSet);
-        saveDeletedIds();
-
-        // PASO 3: Fusión por ID ignorando cualquier ID que esté en allDeletedSet
+        // PASO 2: Fusión inteligente preservando el estado `deleted: true`
         const mergedMap = new Map();
 
         cloudReports.forEach(item => {
           if (item && item.id) {
             const itemId = String(item.id);
-            if (!allDeletedSet.has(itemId)) {
-              mergedMap.set(itemId, { ...item, id: itemId, pendingSync: false });
-            }
+            mergedMap.set(itemId, { ...item, id: itemId, pendingSync: false });
           }
         });
 
         reports.forEach(localItem => {
           if (localItem && localItem.id) {
             const itemId = String(localItem.id);
-            if (!allDeletedSet.has(itemId)) {
-              if (!mergedMap.has(itemId) || localItem.pendingSync) {
-                mergedMap.set(itemId, { ...localItem, id: itemId, pendingSync: false });
+            if (!mergedMap.has(itemId) || localItem.pendingSync || localItem.deleted) {
+              const existing = mergedMap.get(itemId);
+              if (existing && existing.deleted) {
+                mergedMap.set(itemId, { ...localItem, id: itemId, deleted: true });
+              } else {
+                mergedMap.set(itemId, { ...localItem, id: itemId });
               }
             }
           }
@@ -1272,14 +1245,11 @@
           return (b.createdAt || '').localeCompare(a.createdAt || '');
         });
 
-        // PASO 4: Subir tanto los reportes activos como la lista de IDs borrados
-        const payloadContent = JSON.stringify({
-          reports: unifiedReports,
-          deletedIds: deletedIds
-        }, null, 2);
-
+        // PASO 3: Subir la lista unificada al Gist
         const payloadFiles = {
-          "reportes_campo.json": { content: payloadContent }
+          "reportes_campo.json": {
+            content: JSON.stringify(unifiedReports, null, 2)
+          }
         };
 
         let saveResponse;
@@ -1313,7 +1283,7 @@
         }
 
         if (!saveResponse.ok) {
-          throw new Error(`No se pudo guardar en GitHub (${saveResponse.status}). Revisá permisos del Token.`);
+          throw new Error(`Error al guardar en Gist (${saveResponse.status})`);
         }
 
         const savedData = await saveResponse.json();
@@ -1327,9 +1297,10 @@
         saveLocalReports();
         renderReportsList();
 
-        if (!silent) showToast(`Sincronizado (${reports.length} reportes)`, "success");
+        const activeCount = reports.filter(r => !r.deleted).length;
+        if (!silent) showToast(`Sincronizado (${activeCount} reportes activos)`, "success");
       } catch (err) {
-        showToast("Error al sincronizar: " + err.message, "error");
+        showToast("Error en sincronización: " + err.message, "error");
       } finally {
         isSyncing = false;
         syncIcon.classList.remove('fa-spin');
@@ -1337,10 +1308,11 @@
     }
 
     function exportToCSV() {
-      if (reports.length === 0) return showToast("No hay reportes para exportar", "warning");
+      const activeReports = reports.filter(r => !r.deleted);
+      if (activeReports.length === 0) return showToast("No hay reportes para exportar", "warning");
 
       const headers = ["Fecha", "Campo", "Lote", "Superficie", "Cultivo", "Estado", "Plagas", "Malezas", "Aplicar", "Observaciones", "Sincronizado"];
-      const rows = reports.map(r => [
+      const rows = activeReports.map(r => [
         r.fecha,
         `"${(r.campo || '').replace(/"/g, '""')}"`,
         `"${(r.lote || '').replace(/"/g, '""')}"`,
@@ -1390,11 +1362,12 @@
     }
 
     function updateBadges() {
+      const activeReports = reports.filter(r => !r.deleted);
       const pendingCount = reports.filter(r => r.pendingSync).length;
       const pendingBadge = document.getElementById('badge-pending-count');
       const totalBadge = document.getElementById('badge-total-count');
 
-      totalBadge.innerText = reports.length;
+      totalBadge.innerText = activeReports.length;
 
       if (pendingCount > 0) {
         pendingBadge.innerText = pendingCount;
