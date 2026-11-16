@@ -88,7 +88,7 @@
       </div>
 
       <div class="flex items-center space-x-2">
-        <button id="btn-sync-header" onclick="syncWithGist()" title="Sincronizar con la nube"
+        <button id="btn-sync-header" onclick="syncWithGist(false)" title="Sincronizar con la nube"
           class="relative bg-brand-700 hover:bg-brand-600 active:scale-95 text-white p-2.5 rounded-xl border border-brand-600 flex items-center justify-center transition">
           <i id="sync-icon" class="fa-solid fa-rotate text-lg"></i>
           <span id="badge-pending-count" class="hidden absolute -top-1.5 -right-1.5 bg-amber-500 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full border-2 border-brand-800">0</span>
@@ -431,16 +431,20 @@
 
   <script>
     const STORAGE_KEY = 'agri_reports_data';
+    const DELETED_KEY = 'agri_deleted_reports';
     const CONFIG_KEY = 'agri_gist_config';
     const LAST_BACKUP_KEY = 'agri_last_backup_date';
 
     let reports = [];
+    let deletedIds = [];
     let config = { token: '', gistId: '' };
     let currentReportForPdf = null;
+    let isSyncing = false;
 
     window.addEventListener('DOMContentLoaded', () => {
       document.getElementById('field-fecha').value = new Date().toISOString().split('T')[0];
       loadConfig();
+      loadDeletedIds();
       loadLocalReports();
       updateLastBackupLabel();
       updateOnlineStatus();
@@ -457,11 +461,27 @@
       }
     });
 
+    function loadDeletedIds() {
+      const stored = localStorage.getItem(DELETED_KEY);
+      if (stored) {
+        try {
+          deletedIds = JSON.parse(stored).map(String);
+        } catch (e) {
+          deletedIds = [];
+        }
+      }
+    }
+
+    function saveDeletedIds() {
+      localStorage.setItem(DELETED_KEY, JSON.stringify(deletedIds));
+      updateBadges();
+    }
+
     function loadLocalReports() {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         try {
-          reports = JSON.parse(stored);
+          reports = JSON.parse(stored).filter(r => r && !deletedIds.includes(String(r.id)));
         } catch (e) {
           reports = [];
         }
@@ -554,6 +574,10 @@
 
       showToast("Reporte guardado", "success");
       switchTab('history');
+
+      if (navigator.onLine && config.token && config.gistId) {
+        syncWithGist(true);
+      }
     }
 
     function renderReportsList() {
@@ -580,15 +604,15 @@
               <h3 class="font-bold text-slate-800 text-lg leading-tight">${escapeHtml(r.campo)} - Lote ${escapeHtml(r.lote)}</h3>
             </div>
             <div class="flex items-center space-x-1 shrink-0">
-              <button onclick="exportSingleToExcel('${r.id}')" title="Descargar en formato Excel (.xlsx)" class="text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 p-2 rounded-lg border border-green-200 transition flex items-center space-x-1 text-xs font-bold">
+              <button type="button" onclick="exportSingleToExcel('${escapeHtml(String(r.id))}')" title="Descargar en formato Excel (.xlsx)" class="text-green-700 hover:text-green-800 bg-green-50 hover:bg-green-100 p-2 rounded-lg border border-green-200 transition flex items-center space-x-1 text-xs font-bold">
                 <i class="fa-solid fa-file-excel text-sm"></i>
                 <span>XLS</span>
               </button>
-              <button onclick="printSingleReport('${r.id}')" title="Vista Previa / PDF / Imprimir" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
+              <button type="button" onclick="printSingleReport('${escapeHtml(String(r.id))}')" title="Vista Previa / PDF / Imprimir" class="text-red-600 hover:text-red-700 bg-red-50 hover:bg-red-100 p-2 rounded-lg border border-red-200 transition flex items-center space-x-1 text-xs font-bold">
                 <i class="fa-solid fa-file-pdf text-sm"></i>
                 <span>PDF</span>
               </button>
-              <button onclick="deleteReport('${r.id}')" title="Eliminar" class="text-slate-300 hover:text-red-500 p-2">
+              <button type="button" onclick="deleteReport('${escapeHtml(String(r.id))}')" title="Eliminar" class="text-slate-400 hover:text-red-600 hover:bg-red-50 p-2 rounded-lg transition">
                 <i class="fa-solid fa-trash-can"></i>
               </button>
             </div>
@@ -620,7 +644,7 @@
     }
 
     function printSingleReport(id) {
-      const r = reports.find(item => item.id === id);
+      const r = reports.find(item => String(item.id) === String(id));
       if (!r) return;
 
       currentReportForPdf = r;
@@ -993,7 +1017,7 @@
 
     function exportSingleToExcel(id) {
       if (!id) return;
-      const r = reports.find(item => item.id === id);
+      const r = reports.find(item => String(item.id) === String(id));
       if (!r) return;
 
       if (typeof XLSX === 'undefined') {
@@ -1063,27 +1087,32 @@
               event.target.value = '';
               return;
             }
+            deletedIds = [];
+            saveDeletedIds();
             reports = incomingReports.map(r => ({ ...r, pendingSync: true }));
             showToast(`Restaurados ${reports.length} reportes`, "success");
           } else {
-            const existingIds = new Set(reports.map(r => r.id));
+            const existingIds = new Set(reports.map(r => String(r.id)));
             let addedCount = 0;
 
             incomingReports.forEach(item => {
               if (item && item.campo && item.fecha) {
-                if (!item.id || !existingIds.has(item.id)) {
+                const itemId = item.id ? String(item.id) : ('rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6));
+                if (!existingIds.has(itemId)) {
+                  deletedIds = deletedIds.filter(d => d !== itemId);
                   const cleanItem = {
                     ...item,
-                    id: item.id || ('rep_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+                    id: itemId,
                     pendingSync: true
                   };
                   reports.push(cleanItem);
-                  existingIds.add(cleanItem.id);
+                  existingIds.add(itemId);
                   addedCount++;
                 }
               }
             });
 
+            saveDeletedIds();
             reports.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
             showToast(`Copia restaurada: +${addedCount} reportes incorporados`, "success");
           }
@@ -1127,39 +1156,29 @@
     }
 
     async function deleteReport(id) {
-      if (confirm("¿Estás seguro de eliminar este reporte?")) {
-        reports = reports.filter(r => r.id !== id);
-        saveLocalReports();
-        renderReportsList();
-        showToast("Reporte eliminado", "info");
+      const targetId = String(id);
+      if (!confirm("¿Estás seguro de eliminar este reporte?")) return;
 
-        // Actualizar también en GitHub Gist para que no reaparezca al sincronizar
-        if (navigator.onLine && config.token && config.gistId) {
-          try {
-            await fetch(`https://api.github.com/gists/${config.gistId}`, {
-              method: 'PATCH',
-              headers: {
-                'Authorization': `Bearer ${config.token}`,
-                'Accept': 'application/vnd.github+json',
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({
-                description: "Reportes de Monitoreo Agrícola",
-                files: {
-                  "reportes_campo.json": {
-                    content: JSON.stringify(reports, null, 2)
-                  }
-                }
-              })
-            });
-          } catch (e) {
-            console.warn("No se pudo reflejar el borrado en la nube:", e);
-          }
-        }
+      // 1. Eliminar localmente y registrar el ID borrado para que la nube no lo resucite
+      reports = reports.filter(r => String(r.id) !== targetId);
+      if (!deletedIds.includes(targetId)) {
+        deletedIds.push(targetId);
+      }
+
+      saveDeletedIds();
+      saveLocalReports();
+      renderReportsList();
+      showToast("Reporte eliminado", "info");
+
+      // 2. Sincronizar inmediatamente con la nube si hay conexión y credenciales
+      if (navigator.onLine && config.token && config.gistId) {
+        await syncWithGist(true);
       }
     }
 
     async function syncWithGist(silent = false) {
+      if (isSyncing) return;
+
       if (!navigator.onLine) {
         if (!silent) showToast("Sin señal de internet.", "warning");
         return;
@@ -1173,11 +1192,13 @@
         return;
       }
 
+      isSyncing = true;
       const syncIcon = document.getElementById('sync-icon');
       syncIcon.classList.add('fa-spin');
 
       try {
         let cloudReports = [];
+        let cloudDeletedIds = [];
 
         // PASO 1: Descargar primero los reportes existentes en GitHub Gist (GET)
         if (config.gistId) {
@@ -1200,26 +1221,42 @@
           if (fileContent) {
             try {
               const parsed = JSON.parse(fileContent);
-              if (Array.isArray(parsed)) cloudReports = parsed;
+              if (Array.isArray(parsed)) {
+                cloudReports = parsed;
+              } else if (parsed && Array.isArray(parsed.reports)) {
+                cloudReports = parsed.reports;
+                if (Array.isArray(parsed.deletedIds)) {
+                  cloudDeletedIds = parsed.deletedIds.map(String);
+                }
+              }
             } catch (e) {
               console.warn("El archivo en Gist no tenía JSON válido, se inicializará.");
             }
           }
         }
 
-        // PASO 2: Fusión (Merge) por ID sin duplicar ni borrar pendientes locales
+        // Unificar lista de IDs eliminados (locales + nube)
+        const allDeletedSet = new Set([...deletedIds.map(String), ...cloudDeletedIds]);
+
+        // PASO 2: Fusión (Merge) por ID excluyendo todos los eliminados
         const mergedMap = new Map();
 
         cloudReports.forEach(item => {
           if (item && item.id) {
-            mergedMap.set(item.id, { ...item, pendingSync: false });
+            const itemId = String(item.id);
+            if (!allDeletedSet.has(itemId)) {
+              mergedMap.set(itemId, { ...item, id: itemId, pendingSync: false });
+            }
           }
         });
 
         reports.forEach(localItem => {
           if (localItem && localItem.id) {
-            if (!mergedMap.has(localItem.id) || localItem.pendingSync) {
-              mergedMap.set(localItem.id, { ...localItem, pendingSync: false });
+            const itemId = String(localItem.id);
+            if (!allDeletedSet.has(itemId)) {
+              if (!mergedMap.has(itemId) || localItem.pendingSync) {
+                mergedMap.set(itemId, { ...localItem, id: itemId, pendingSync: false });
+              }
             }
           }
         });
@@ -1231,6 +1268,7 @@
         });
 
         // PASO 3: Subir la lista unificada a GitHub Gist (PATCH o POST)
+        // Guardamos el array directo para mantener compatibilidad 100% con versiones anteriores
         const payloadFiles = {
           "reportes_campo.json": {
             content: JSON.stringify(unifiedReports, null, 2)
@@ -1277,7 +1315,9 @@
           document.getElementById('config-gist-id').value = savedData.id;
         }
 
-        // PASO 4: Actualizar estado local y pantalla
+        // PASO 4: Limpiar borrados ya confirmados en la nube y actualizar pantalla
+        deletedIds = [];
+        saveDeletedIds();
         reports = unifiedReports;
         saveLocalReports();
         renderReportsList();
@@ -1286,6 +1326,7 @@
       } catch (err) {
         if (!silent) showToast("Error en sincronización: " + err.message, "error");
       } finally {
+        isSyncing = false;
         syncIcon.classList.remove('fa-spin');
       }
     }
@@ -1344,7 +1385,7 @@
     }
 
     function updateBadges() {
-      const pendingCount = reports.filter(r => r.pendingSync).length;
+      const pendingCount = reports.filter(r => r.pendingSync).length + deletedIds.length;
       const pendingBadge = document.getElementById('badge-pending-count');
       const totalBadge = document.getElementById('badge-total-count');
 
